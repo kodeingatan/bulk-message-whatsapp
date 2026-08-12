@@ -146,6 +146,19 @@ server.listen(PORT, HOST, () => {
 
     console.log("Jalankan startBot() untuk memulai koneksi ke WhatsApp");
     startBot()
+
+    // console.log("Menunggu pesan dari sender.js...");
+    // setInterval(async () => {
+    //     if (queue.length > 0) {
+    //         const { phoneNumber, textMessage } = queue.shift();
+    //         console.log(`Mengirim pesan ke ${phoneNumber}: ${textMessage}`);
+    //         await new Promise((rev) => setTimeout(() => {
+    //             await sendMessage(`${phoneNumber}@s.whatsapp.net`, textMessage);
+    //             rev(true);
+    //         }, 15000)); // Delay 15 detik sebelum mengirim
+    //     }
+    // }, 1000); // Periksa antrian setiap 1 detik
+
 });
 
 server.on("error", (err) => {
