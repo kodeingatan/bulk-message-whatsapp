@@ -110,7 +110,7 @@ async function sendMessage(jid, text) {
 const server = net.createServer((socket) => {
     console.log("Client terhubung");
 
-    socket.on("data", (data) => {
+    socket.on("data", async (data) => {
         const message = data.toString().trim();
         console.log("Pesan diterima:", message);
 
@@ -120,10 +120,7 @@ const server = net.createServer((socket) => {
             const textMessage = messageObject?.message;
             if (phoneNumber && textMessage) {
                 console.log(`Menerima permintaan kirim pesan ke ${phoneNumber}: ${textMessage}`);
-                setTimeout(async () => {
-                    // Ganti nomor sesuai kebutuhan
-                    await sendMessage(`${phoneNumber}@s.whatsapp.net`, textMessage)
-                }, 15000)
+                await sendMessage(`${phoneNumber}@s.whatsapp.net`, textMessage)
             }
         }
 

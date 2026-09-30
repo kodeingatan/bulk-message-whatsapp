@@ -1,4 +1,10 @@
 import { sendWAMessage } from "./sender.js";
 
 
-sendWAMessage("6282382452050", "Bantu Saya Untuk Menenukan pemilik asli saya!")
+(async () => {
+    for (let i = 0; i < 5; i++) {
+        console.log(`Mengirim pesan ke-${i + 1} dari bot...`);
+        await sendWAMessage("62895708870305", `Pesan ke-${i + 1} dari bot`)
+        console.log(`✅ Pesan ke-${i + 1} berhasil dikirim!`);
+    }
+})()

@@ -4,7 +4,6 @@ import { HOST, PORT } from "./config.js";
 
 function sendMessage(message) {
     const client = net.createConnection({ port: PORT, host: HOST }, () => {
-        console.log("Terhubung ke receiver");
         client.write(message + "\n");
         client.end(); // langsung tutup setelah kirim
     });
@@ -19,7 +18,8 @@ function sendMessageJSON(objectMessage) {
     sendMessage(JSON.stringify(objectMessage));
 }
 
-function sendWAMessage(phoneNumber, textMessage) {
+async function sendWAMessage(phoneNumber, textMessage) {
+    await new Promise((resolve) => setTimeout(resolve, 15000));
     sendMessageJSON({ phone: phoneNumber, message: textMessage });
 }
 
