@@ -19,8 +19,8 @@ function sendMessageJSON(objectMessage) {
 }
 
 async function sendWAMessage(phoneNumber, textMessage) {
-    await new Promise((resolve) => setTimeout(resolve, 15000));
     sendMessageJSON({ phone: phoneNumber, message: textMessage });
+    await new Promise((resolve) => setTimeout(resolve, 15000));
 }
 
 const pesan = process.argv[2] || "Pesan default";
