@@ -1,4 +1,4 @@
-import { sendWAMessage } from "./sender.js";
+import { sendWAMessage } from "../sender.js";
 
 
 (async () => {

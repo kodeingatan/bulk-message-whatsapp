@@ -1,0 +1,320 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+:root {
+  --background: #f3f6f4;
+  --foreground: #17251f;
+  --card: #ffffff;
+  --card-foreground: #17251f;
+  --popover: #ffffff;
+  --popover-foreground: #17251f;
+  --primary: #087f5b;
+  --primary-foreground: #ffffff;
+  --secondary: #eaf2ee;
+  --secondary-foreground: #1c3c2f;
+  --muted: #f1f5f3;
+  --muted-foreground: #6b7b72;
+  --accent: #e8f5ee;
+  --accent-foreground: #075c40;
+  --destructive: #c2413b;
+  --border: #e3ebe6;
+  --input: #d9e3dd;
+  --ring: #24a475;
+  --radius: 0.85rem;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    font-family: Inter, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background: var(--background);
+    color: var(--foreground);
+    letter-spacing: -0.01em;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+.app-shell {
+  background:
+    radial-gradient(ellipse at 75% 0%, rgb(223 241 231 / 34%), transparent 34rem),
+    var(--background);
+}
+
+.app-sidebar {
+  background:
+    radial-gradient(ellipse at 0% 5%, rgb(33 121 85 / 24%), transparent 22rem),
+    linear-gradient(180deg, #102b23 0%, #10251f 100%);
+  box-shadow: 8px 0 32px rgb(19 47 36 / 5%);
+}
+
+.app-brand-mark {
+  box-shadow: 0 8px 20px rgb(16 185 129 / 22%), inset 0 1px 0 rgb(255 255 255 / 28%);
+}
+
+.app-main {
+  background: transparent;
+}
+
+.app-topbar {
+  min-height: 84px;
+  border-color: rgb(222 231 225 / 85%);
+  background: rgb(255 255 255 / 86%);
+  box-shadow: 0 4px 20px rgb(24 48 36 / 3%);
+  backdrop-filter: blur(16px);
+}
+
+.app-content {
+  background: transparent;
+}
+
+.app-content > section {
+  animation: app-enter 260ms ease-out both;
+}
+
+@keyframes app-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-sidebar nav > button {
+  border: 1px solid transparent;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+.app-sidebar nav > button:hover {
+  transform: translateX(2px);
+}
+
+.app-sidebar nav > button[aria-current="page"] {
+  border-color: rgb(167 243 208 / 14%);
+  box-shadow: inset 3px 0 0 #4ade80, 0 8px 18px rgb(2 18 12 / 16%);
+}
+
+.app-sidebar nav > button.dataset-nav-item {
+  position: relative;
+  border-left: 1px solid rgb(167 243 208 / 18%);
+  border-radius: 0 0.65rem 0.65rem 0;
+}
+
+.sidebar-connection {
+  border: 1px solid rgb(255 255 255 / 9%);
+  background: linear-gradient(145deg, rgb(255 255 255 / 8%), rgb(255 255 255 / 4%));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
+}
+
+.app-main .grid-toolbar {
+  box-shadow: inset 0 -1px 0 rgb(226 235 229 / 70%);
+}
+
+.app-main [role="progressbar"] {
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e6eee9;
+}
+
+.app-main input:not(.cell-input),
+.app-main textarea {
+  border-radius: 0.65rem;
+}
+
+.app-main .message-preview {
+  scrollbar-width: thin;
+}
+
+.app-main .rounded-xl.border,
+.app-main .rounded-2xl.border {
+  border-color: #e4ebe6;
+  box-shadow: 0 12px 32px rgb(26 53 39 / 4%), 0 1px 2px rgb(26 53 39 / 3%);
+}
+
+.app-main button,
+.app-main [role="button"] {
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
+}
+
+.app-main button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.app-main table thead th {
+  color: #64766c;
+  font-size: 0.69rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+}
+
+.app-main table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.app-main table tbody tr:nth-child(even) {
+  background-color: rgb(247 250 248 / 74%);
+}
+
+.app-main table tbody tr:hover {
+  background-color: #edf7f1;
+}
+
+.app-main .flat-scrollbar {
+  scrollbar-color: #aabbb0 #eef3ef;
+}
+
+.cell-input {
+  width: 100%;
+  height: 2rem;
+  border: 0;
+  background: transparent;
+  outline: 0;
+  color: inherit;
+}
+
+.cell-input:disabled {
+  cursor: not-allowed;
+}
+
+.flat-scrollbar {
+  scrollbar-color: #b7c4bc #edf1ee;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+.flat-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.flat-scrollbar::-webkit-scrollbar-track {
+  background: #edf1ee;
+}
+
+.flat-scrollbar::-webkit-scrollbar-thumb {
+  border: 2px solid #edf1ee;
+  border-radius: 0;
+  background: #b7c4bc;
+}
+
+.flat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #84998b;
+}
+
+.flat-scrollbar::-webkit-scrollbar-corner {
+  background: #edf1ee;
+}
+
+.column-resize-handle {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: -3px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.column-resize-handle::after {
+  position: absolute;
+  top: 25%;
+  right: 3px;
+  width: 1px;
+  height: 50%;
+  background: #cbd5ce;
+  content: "";
+}
+
+.column-resize-handle:hover::after {
+  width: 2px;
+  background: #087443;
+}
+
+.row-resize-handle {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  bottom: -3px;
+  left: 0;
+  height: 8px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.row-resize-handle::after {
+  position: absolute;
+  right: 20%;
+  bottom: 3px;
+  left: 20%;
+  height: 1px;
+  background: transparent;
+  content: "";
+}
+
+.group:hover .row-resize-handle::after {
+  background: #cbd5ce;
+}
+
+.row-resize-handle:hover::after {
+  height: 2px;
+  background: #087443 !important;
+}
+
+.message-preview {
+  max-height: 100%;
+  overflow: auto;
+  scrollbar-color: #c5d0c8 transparent;
+  scrollbar-width: thin;
+}

@@ -1,4 +1,6 @@
 import net from "net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import qrcode from 'qrcode-terminal'
@@ -6,6 +8,9 @@ import pino from 'pino'
 
 import { HOST, PORT } from "./config.js";
 import { parseJSON } from "./helpers.js";
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const authDir = path.join(projectRoot, "auth_info");
 
 
 // === GLOBAL SOCKET (penting!) ===
@@ -17,7 +22,7 @@ async function startBot() {
     isConnecting = true
 
     try {
-        const { state, saveCreds } = await useMultiFileAuthState('auth_info')
+        const { state, saveCreds } = await useMultiFileAuthState(authDir)
 
         sock = makeWASocket({
             auth: state,
