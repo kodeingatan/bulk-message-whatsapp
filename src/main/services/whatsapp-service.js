@@ -10,7 +10,7 @@ import {
   makeWASocket,
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
-import { getAttachmentType } from "./attachment-service.js";
+import { getAttachmentType } from "./attachment-types.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -34,6 +34,7 @@ export interface MessageDataset {
   name: string;
   sheet: string;
   source?: "excel" | "manual";
+  sharedAttachments?: MessageAttachment[];
   rows: ContactRow[];
 }
 

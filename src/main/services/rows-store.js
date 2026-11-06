@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { MAX_IMPORT_ROWS } from "../../shared/constants.js";
-import { sanitizeRow } from "../utils/rows.js";
+import { sanitizeAttachments, sanitizeRow } from "../utils/rows.js";
 
 export class RowsStore {
   constructor({ dataFile }) {
@@ -35,6 +35,7 @@ export class RowsStore {
       name: String(dataset?.name ?? "Data Excel"),
       sheet: String(dataset?.sheet ?? ""),
       source: dataset?.source === "manual" ? "manual" : "excel",
+      sharedAttachments: sanitizeAttachments(dataset?.sharedAttachments),
       rows: Array.isArray(dataset?.rows)
         ? dataset.rows.slice(0, MAX_IMPORT_ROWS).map(sanitizeRow)
         : [],
@@ -94,6 +95,7 @@ export class RowsStore {
             name: String(dataset?.name ?? "Data Excel"),
             sheet: String(dataset?.sheet ?? ""),
             source: dataset?.source === "manual" ? "manual" : "excel",
+            sharedAttachments: sanitizeAttachments(dataset?.sharedAttachments),
             rows: Array.isArray(dataset?.rows)
               ? dataset.rows.slice(0, MAX_IMPORT_ROWS).map(sanitizeRow)
               : [],

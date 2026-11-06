@@ -115,8 +115,16 @@ type MessageEditorHistory = {
   lastAt: number;
 };
 type MessageEditorView = "edit" | "whatsapp-preview" | "data-preview";
+type CustomDataEditor = {
+  fieldName: string;
+  editingField: string | null;
+  values: Record<string, string>;
+  page: number;
+  error?: string;
+};
 
 const MAX_ROWS = 10_000;
+const CUSTOM_DATA_PAGE_SIZE = 50;
 const columns = ["WA Number", "Penerima", "WA Message", "Status", "Terkirim Pada", "Keterangan"];
 const initialColumnWidths = [48, 180, 220, 380, 132, 164, 240, 136];
 const gridColumnToTableColumn = [2, 3, 4, 5, 6, 7];
@@ -348,6 +356,7 @@ export function App() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [datasetContextMenu, setDatasetContextMenu] = useState<DatasetContextMenu | null>(null);
   const [messageDataMenu, setMessageDataMenu] = useState<MessageDataMenu | null>(null);
+  const [customDataEditor, setCustomDataEditor] = useState<CustomDataEditor | null>(null);
   const [messageEditor, setMessageEditor] = useState<{
     rowId: string;
     rowNumber: number;
@@ -368,7 +377,6 @@ export function App() {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [delay, setDelay] = useState(15);
   const [skipSent, setSkipSent] = useState(true);
-  const [sharedAttachments, setSharedAttachments] = useState<MessageAttachment[]>([]);
   const [clipboardText, setClipboardText] = useState("");
   const stopRequested = useRef(false);
   const waRef = useRef(wa);
@@ -458,6 +466,7 @@ export function App() {
 
   const activeDataset = datasets.find((dataset) => dataset.id === activeDatasetId) ?? null;
   const rows = activeDataset?.rows ?? [];
+  const sharedAttachments = activeDataset?.sharedAttachments ?? [];
 
   const updateRows = useCallback((updater: (current: ContactRow[]) => ContactRow[]) => {
     if (!activeDatasetId) return;
@@ -625,6 +634,10 @@ export function App() {
       sent: rows.filter((row) => row.status === "sent").length,
       failed: rows.filter((row) => row.status === "failed").length,
     }),
+    [rows],
+  );
+  const personalizationFields = useMemo(
+    () => [...new Set(rows.flatMap((row) => Object.keys(row.sourceData ?? {}).filter((key) => key.trim())))],
     [rows],
   );
   const checkedRows = useMemo(
@@ -1166,11 +1179,18 @@ export function App() {
         return;
       }
       const first = rows.length;
-      updateRows((current) => [...current, ...Array.from({ length: count }, newRow)]);
+      const sourceKeys = [...new Set(rows.flatMap((row) => Object.keys(row.sourceData ?? {})))];
+      updateRows((current) => [
+        ...current,
+        ...Array.from({ length: count }, () => ({
+          ...newRow(),
+          sourceData: Object.fromEntries(sourceKeys.map((key) => [key, ""])),
+        })),
+      ]);
       setPage("table");
       setCellSelection({ row: first, col: 0 });
     },
-    [rows.length, sending, setCellSelection, toast, updateRows],
+    [rows, sending, setCellSelection, toast, updateRows],
   );
 
   const patchRow = useCallback((id: string, update: Partial<ContactRow>) => {
@@ -1197,13 +1217,179 @@ export function App() {
         patchRow(row.id, { attachments: mergeAttachments(row.attachments ?? []) });
         toast(`${selected.length} berkas ditambahkan ke baris.`, "success");
       } else {
-        setSharedAttachments(mergeAttachments);
+        if (!activeDatasetId) {
+          toast("Pilih tabel pesan terlebih dahulu.", "error");
+          return;
+        }
+        setDatasets((current) =>
+          current.map((dataset) =>
+            dataset.id === activeDatasetId
+              ? { ...dataset, sharedAttachments: mergeAttachments(dataset.sharedAttachments ?? []) }
+              : dataset,
+          ),
+        );
         toast(`${selected.length} berkas ditambahkan ke lampiran bersama.`, "success");
       }
     } catch (error) {
       toast(`Gagal memilih berkas: ${errorMessage(error)}`, "error");
     }
-  }, [patchRow, sending, toast]);
+  }, [activeDatasetId, patchRow, sending, toast]);
+
+  const openCustomDataEditor = useCallback(() => {
+    if (sending) return;
+    if (!rows.length) {
+      toast("Tambahkan baris pesan terlebih dahulu sebelum membuat kolom data.", "info");
+      return;
+    }
+    const firstField = personalizationFields[0] ?? null;
+    setCustomDataEditor({
+      fieldName: firstField ?? "",
+      editingField: firstField,
+      values: firstField
+        ? Object.fromEntries(rows.map((row) => [row.id, row.sourceData?.[firstField] ?? ""]))
+        : {},
+      page: 0,
+    });
+  }, [personalizationFields, rows, sending, toast]);
+
+  const selectCustomDataField = useCallback((fieldName: string | null) => {
+    setCustomDataEditor((current) => {
+      if (!current) return current;
+      return {
+        fieldName: fieldName ?? "",
+        editingField: fieldName,
+        values: fieldName
+          ? Object.fromEntries(rows.map((row) => [row.id, row.sourceData?.[fieldName] ?? ""]))
+          : {},
+        page: 0,
+      };
+    });
+  }, [rows]);
+
+  const saveCustomDataColumn = useCallback(() => {
+    if (!customDataEditor || sending) return;
+    const fieldName = customDataEditor.editingField ?? customDataEditor.fieldName.trim();
+    if (!fieldName) {
+      setCustomDataEditor({ ...customDataEditor, error: "Nama kolom tidak boleh kosong." });
+      return;
+    }
+    if (fieldName.length > 100) {
+      setCustomDataEditor({ ...customDataEditor, error: "Nama kolom maksimal 100 karakter." });
+      return;
+    }
+    if (/[\u0000-\u001f]/.test(fieldName)) {
+      setCustomDataEditor({ ...customDataEditor, error: "Nama kolom mengandung karakter yang tidak valid." });
+      return;
+    }
+    const alreadyExists = !customDataEditor.editingField && personalizationFields.some(
+      (key) => key.toLocaleLowerCase() === fieldName.toLocaleLowerCase(),
+    );
+    if (alreadyExists) {
+      setCustomDataEditor({
+        ...customDataEditor,
+        error: "Nama kolom sudah ada. Gunakan nama yang berbeda agar data impor tidak tertimpa.",
+      });
+      return;
+    }
+
+    updateRows((current) =>
+      current.map((row) => ({
+        ...row,
+        sourceData: {
+          ...(row.sourceData ?? {}),
+          [fieldName]: customDataEditor.values[row.id] ?? "",
+        },
+      })),
+    );
+    setCustomDataEditor({
+      fieldName,
+      editingField: fieldName,
+      values: { ...customDataEditor.values },
+      page: customDataEditor.page,
+    });
+    toast(
+      customDataEditor.editingField
+        ? `Perubahan kolom "${fieldName}" disimpan.`
+        : `Kolom "${fieldName}" ditambahkan dan disimpan. Gunakan {{${fieldName}}} pada pesan.`,
+      "success",
+      5000,
+    );
+  }, [customDataEditor, personalizationFields, rows, sending, toast, updateRows]);
+
+  const deleteCustomDataColumn = useCallback(async (fieldName: string) => {
+    if (sending) return;
+    const confirmed = await confirm({
+      title: `Hapus kolom "${fieldName}"?`,
+      message: `Kolom "${fieldName}" dan nilainya pada semua ${rows.length} baris akan dihapus dari tabel. Token {{${fieldName}}} yang sudah ada di pesan tidak akan ikut terhapus.`,
+      confirmText: "Hapus Kolom",
+      danger: true,
+    });
+    if (!confirmed) return;
+
+    updateRows((current) =>
+      current.map((row) => {
+        const sourceData = { ...(row.sourceData ?? {}) };
+        delete sourceData[fieldName];
+        return { ...row, sourceData };
+      }),
+    );
+
+    const nextField = personalizationFields.find((name) => name !== fieldName) ?? null;
+    setCustomDataEditor({
+      fieldName: nextField ?? "",
+      editingField: nextField,
+      values: nextField
+        ? Object.fromEntries(rows.map((row) => [row.id, row.sourceData?.[nextField] ?? ""]))
+        : {},
+      page: 0,
+    });
+    toast(`Kolom "${fieldName}" dan nilainya telah dihapus.`, "success");
+  }, [confirm, personalizationFields, rows, sending, toast, updateRows]);
+
+  const setCustomDataValue = useCallback((rowId: string, value: string) => {
+    setCustomDataEditor((current) =>
+      current
+        ? {
+            ...current,
+            values: { ...current.values, [rowId]: value },
+            error: undefined,
+          }
+        : current,
+    );
+  }, []);
+
+  const pasteCustomDataValues = useCallback((startRowIndex: number, text: string) => {
+    const values = text.replace(/\r/g, "").split("\n");
+    if (values.at(-1) === "") values.pop();
+    const updates = new Map(
+      rows.slice(startRowIndex, startRowIndex + values.length).map((row, index) => [row.id, values[index].split("\t")[0]]),
+    );
+    if (!updates.size) return;
+    setCustomDataEditor((current) =>
+      current
+        ? {
+            ...current,
+            values: { ...current.values, ...Object.fromEntries(updates) },
+            page: Math.floor((startRowIndex + updates.size - 1) / CUSTOM_DATA_PAGE_SIZE),
+            error: undefined,
+          }
+        : current,
+    );
+    const lastRowIndex = startRowIndex + updates.size - 1;
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLInputElement>(`[data-custom-data-row="${lastRowIndex}"]`)?.focus();
+    });
+    toast(`${updates.size} nilai ditempel ke kolom.`, "success", 2500);
+  }, [rows, toast]);
+
+  const moveCustomDataFocus = useCallback((rowIndex: number) => {
+    if (rowIndex < 0 || rowIndex >= rows.length) return;
+    const nextPage = Math.floor(rowIndex / CUSTOM_DATA_PAGE_SIZE);
+    setCustomDataEditor((current) => current ? { ...current, page: nextPage } : current);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLInputElement>(`[data-custom-data-row="${rowIndex}"]`)?.focus();
+    });
+  }, [rows.length]);
 
   const resetRow = useCallback(
     (rowIndex: number) => {
@@ -2063,6 +2249,14 @@ export function App() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="outline" disabled={sending} onClick={() => addRows()}><Plus />Baris</Button>
+                  <Button
+                    variant="outline"
+                    disabled={sending || !rows.length}
+                    onClick={openCustomDataEditor}
+                    title="Tambahkan kolom personalisasi dengan nilai berbeda pada tiap baris"
+                  >
+                    <Plus />Data Tambahan
+                  </Button>
                   <Button variant="outline" disabled={sending || !rows.length} onClick={() => void deleteRows(selection?.r1 ?? active?.row ?? 0, startSelection)}><Trash2 />Hapus Baris</Button>
                   {checkedRows.length > 0 && (
                     <>
@@ -2097,7 +2291,16 @@ export function App() {
                       disabled={sending}
                       aria-label="Hapus semua lampiran bersama"
                       title="Hapus semua lampiran bersama"
-                      onClick={() => setSharedAttachments([])}
+                      onClick={() => {
+                        if (!activeDatasetId) return;
+                        setDatasets((current) =>
+                          current.map((dataset) =>
+                            dataset.id === activeDatasetId
+                              ? { ...dataset, sharedAttachments: [] }
+                              : dataset,
+                          ),
+                        );
+                      }}
                     >
                       <X />
                     </Button>
@@ -2448,6 +2651,199 @@ export function App() {
         )}
       </Dialog>
       <Dialog
+        open={Boolean(customDataEditor)}
+        onOpenChange={(open) => {
+          if (!open) setCustomDataEditor(null);
+        }}
+      >
+        {customDataEditor && (
+          <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col gap-3">
+            <DialogHeader>
+              <DialogTitle>Data kolom personalisasi</DialogTitle>
+              <DialogDescription>
+                  Kolom tersimpan tetap tercatat di tabel ini. Pilih kolom untuk melihat atau mengubah nilainya, atau tambahkan kolom baru.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-600">
+                  Kolom tersimpan ({personalizationFields.length})
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={customDataEditor.editingField === null ? "secondary" : "outline"}
+                  onClick={() => selectCustomDataField(null)}
+                >
+                  <Plus />Kolom baru
+                </Button>
+              </div>
+              {personalizationFields.length ? (
+                <div className="flat-scrollbar flex gap-2 overflow-x-auto pb-1">
+                  {personalizationFields.map((fieldName) => {
+                    const populatedCount = rows.filter((row) => Boolean(row.sourceData?.[fieldName]?.trim())).length;
+                    return (
+                      <div key={fieldName} className="flex shrink-0 items-center overflow-hidden rounded-md border border-slate-200">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={customDataEditor.editingField === fieldName ? "primary" : "ghost"}
+                          className="rounded-r-none border-0"
+                          title={`${populatedCount} dari ${rows.length} baris memiliki nilai`}
+                          onClick={() => selectCustomDataField(fieldName)}
+                        >
+                          {fieldName}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="size-8 rounded-l-none text-slate-500 hover:bg-red-50 hover:text-destructive"
+                          aria-label={`Hapus kolom ${fieldName}`}
+                          title={`Hapus kolom ${fieldName}`}
+                          disabled={sending}
+                          onClick={() => void deleteCustomDataColumn(fieldName)}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="rounded-md border border-dashed px-3 py-2 text-xs text-slate-500">
+                  Belum ada kolom tersimpan. Tambahkan kolom baru untuk mengisi data personalisasi.
+                </p>
+              )}
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200">
+              <div className="sticky top-0 z-10 grid grid-cols-[64px_minmax(0,1fr)_minmax(0,1.2fr)] border-b bg-slate-100 text-xs font-semibold text-slate-600">
+                <span className="border-r border-slate-200 px-3 py-2">#</span>
+                <span className="border-r border-slate-200 px-3 py-2">WA Number / Penerima</span>
+                <Input
+                  id="custom-data-field"
+                  maxLength={100}
+                  aria-label="Nama kolom data baru"
+                  className="h-9 rounded-none border-0 bg-slate-100 text-xs font-semibold shadow-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500"
+                  placeholder="Nama kolom baru…"
+                  value={customDataEditor.fieldName}
+                  disabled={customDataEditor.editingField !== null}
+                  onChange={(event) =>
+                    setCustomDataEditor({
+                      ...customDataEditor,
+                      fieldName: event.target.value,
+                      error: undefined,
+                    })
+                  }
+                />
+              </div>
+              <div className="flat-scrollbar min-h-0 flex-1 overflow-y-auto">
+                {rows
+                  .slice(
+                    customDataEditor.page * CUSTOM_DATA_PAGE_SIZE,
+                    (customDataEditor.page + 1) * CUSTOM_DATA_PAGE_SIZE,
+                  )
+                  .map((row, pageIndex) => {
+                    const rowIndex = customDataEditor.page * CUSTOM_DATA_PAGE_SIZE + pageIndex;
+                    return (
+                      <div
+                        key={row.id}
+                        className="grid grid-cols-[64px_minmax(0,1fr)_minmax(0,1.2fr)] border-b border-slate-100 last:border-b-0"
+                      >
+                        <span className="flex items-center border-r border-slate-100 bg-slate-50 px-3 text-xs tabular-nums text-slate-500">{rowIndex + 1}</span>
+                        <span className="flex min-w-0 flex-col justify-center border-r border-slate-100 px-3 py-1.5">
+                          <span className="block truncate text-xs font-medium text-slate-700">
+                            {row.phone || "Nomor belum diisi"}
+                          </span>
+                          {row.recipient && (
+                            <span className="block truncate text-[11px] text-slate-500">{row.recipient}</span>
+                          )}
+                        </span>
+                        <Input
+                          data-custom-data-row={rowIndex}
+                          aria-label={`Nilai ${customDataEditor.fieldName || "kolom baru"} baris ${rowIndex + 1}`}
+                          className="h-10 rounded-none border-0 bg-white px-3 text-sm shadow-none focus-visible:z-[1] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500"
+                          placeholder="Ketik nilai…"
+                          value={customDataEditor.values[row.id] ?? ""}
+                          onChange={(event) => setCustomDataValue(row.id, event.target.value)}
+                          onKeyDown={(event) => {
+                            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                              event.preventDefault();
+                              saveCustomDataColumn();
+                            } else if (event.key === "Enter") {
+                              event.preventDefault();
+                              moveCustomDataFocus(rowIndex + (event.shiftKey ? -1 : 1));
+                            } else if (event.key === "Tab" && !event.shiftKey) {
+                              if (rowIndex === rows.length - 1) {
+                                event.preventDefault();
+                                saveCustomDataColumn();
+                              } else {
+                                event.preventDefault();
+                                moveCustomDataFocus(rowIndex + 1);
+                              }
+                            } else if (event.key === "Tab" && event.shiftKey && rowIndex > 0) {
+                              event.preventDefault();
+                              moveCustomDataFocus(rowIndex - 1);
+                            }
+                          }}
+                          onPaste={(event) => {
+                            const text = event.clipboardData.getData("text/plain");
+                            if (!/[\r\n\t]/.test(text)) return;
+                            event.preventDefault();
+                            pasteCustomDataValues(rowIndex, text);
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+              </div>
+              <div className="flex items-center justify-between border-t bg-slate-50 px-3 py-2">
+                <span className="text-xs text-slate-500">
+                  {rows.length} baris • tampil {customDataEditor.page * CUSTOM_DATA_PAGE_SIZE + 1}–{Math.min((customDataEditor.page + 1) * CUSTOM_DATA_PAGE_SIZE, rows.length)}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={customDataEditor.page === 0}
+                    onClick={() =>
+                      setCustomDataEditor({ ...customDataEditor, page: customDataEditor.page - 1 })
+                    }
+                  >
+                    Sebelumnya
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={(customDataEditor.page + 1) * CUSTOM_DATA_PAGE_SIZE >= rows.length}
+                    onClick={() =>
+                      setCustomDataEditor({ ...customDataEditor, page: customDataEditor.page + 1 })
+                    }
+                  >
+                    Berikutnya
+                  </Button>
+                </div>
+              </div>
+            </div>
+            {customDataEditor.error && (
+              <p className="text-sm text-destructive" role="alert">{customDataEditor.error}</p>
+            )}
+            <p className="text-xs text-slate-500">
+              Tips: klik sel pertama lalu tempel satu kolom dari Excel. Enter pindah ke baris berikutnya; Ctrl+Enter menyimpan. Setelah disimpan, klik kanan WA Message untuk menyisipkan token seperti {"{{"}NamaKolom{"}}"}.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setCustomDataEditor(null)}>Batal</Button>
+              <Button variant="primary" onClick={saveCustomDataColumn}>
+                {customDataEditor.editingField ? <Check /> : <Plus />}
+                {customDataEditor.editingField ? "Simpan Perubahan" : "Tambah Kolom"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
+      <Dialog
         open={Boolean(messageEditor)}
         onOpenChange={(open) => {
           if (!open) {
@@ -2713,14 +3109,14 @@ export function App() {
                     <p className="px-3 py-3 text-xs text-slate-500">
                       {editorSourceFields.length
                         ? "Tidak ada kolom yang cocok dengan pencarian."
-                        : "Tidak ada kolom sumber Excel pada baris ini."}
+                        : "Belum ada data tambahan pada baris ini. Tambahkan kolom melalui tombol Data Tambahan di tabel."}
                     </p>
                   )}
                 </div>
               </div>
             )}
             <p className="text-xs text-muted-foreground">
-              Klik kanan untuk menyisipkan kolom dari baris Excel ini. Token seperti {"{{Nama}}"} akan diisi otomatis saat pesan dikirim.
+              Klik kanan untuk menyisipkan kolom data dari baris ini. Token seperti {"{{Nama}}"} akan diisi otomatis saat pesan dikirim.
             </p>
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>{messageEditor.value.length.toLocaleString("id-ID")} karakter</span>
@@ -2737,7 +3133,7 @@ export function App() {
         <>
           <button
             type="button"
-            aria-label="Tutup pilihan data Excel"
+            aria-label="Tutup pilihan data baris"
             className="fixed inset-0 z-[70] cursor-default"
             onClick={() => setMessageDataMenu(null)}
             onContextMenu={(event) => {
@@ -2747,7 +3143,7 @@ export function App() {
           />
           <div
             role="menu"
-            aria-label="Sisipkan data dari baris Excel"
+            aria-label="Sisipkan data dari baris pesan"
             className="fixed z-[80] w-72 overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-800 shadow-2xl shadow-slate-900/15"
             style={{
               top: Math.max(8, Math.min(messageDataMenu.y, window.innerHeight - 320)),
@@ -2779,7 +3175,7 @@ export function App() {
                 if (!fields.length) {
                   return (
                     <p className="px-3 py-4 text-xs leading-5 text-slate-500">
-                      Tidak ada kolom sumber Excel pada baris ini.
+                      Belum ada kolom data pada baris ini. Gunakan tombol Data Tambahan untuk membuat kolom personalisasi.
                     </p>
                   );
                 }

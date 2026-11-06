@@ -183,6 +183,25 @@ export function mergeWorksheetData(row, rowIndex, selectedSheetName, worksheetRo
   return { ...row, sourceData };
 }
 
+export function sanitizeAttachments(attachments) {
+  if (!Array.isArray(attachments)) return [];
+  return attachments
+    .filter(
+      (attachment) =>
+        attachment &&
+        typeof attachment.path === "string" &&
+        typeof attachment.name === "string" &&
+        typeof attachment.mimeType === "string" &&
+        ["image", "video", "audio", "document"].includes(attachment.kind),
+    )
+    .map((attachment) => ({
+      path: attachment.path,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      kind: attachment.kind,
+    }));
+}
+
 export function sanitizeRow(row) {
   const status = STATUS_SET.has(row?.status) ? row.status : "pending";
   const sourceData =
@@ -202,17 +221,6 @@ export function sanitizeRow(row) {
     sentAt: String(row?.sentAt ?? ""),
     error: String(row?.error ?? ""),
     ...(sourceData ? { sourceData } : {}),
-    ...(Array.isArray(row?.attachments)
-      ? {
-          attachments: row.attachments
-            .filter((attachment) => attachment && typeof attachment.path === "string")
-            .map((attachment) => ({
-              path: attachment.path,
-              name: String(attachment.name ?? ""),
-              mimeType: String(attachment.mimeType ?? ""),
-              kind: String(attachment.kind ?? "document"),
-            })),
-        }
-      : {}),
+    ...(Array.isArray(row?.attachments) ? { attachments: sanitizeAttachments(row.attachments) } : {}),
   };
 }
