@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import QRCode from "qrcode";
 import pino from "pino";
 import { Boom } from "@hapi/boom";
@@ -9,6 +10,7 @@ import {
   makeWASocket,
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
+import { getAttachmentType } from "./attachment-service.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -261,20 +263,59 @@ export class WhatsAppService {
     return this.connect();
   }
 
-  async send(phone, message) {
+  async send(phone, message, attachments = []) {
     const number = normalizePhone(phone);
     if (!number) throw new Error("Nomor WhatsApp tidak valid");
     if (number.length < 8) throw new Error("Nomor WhatsApp terlalu pendek");
 
     const text = String(message ?? "");
-    if (!text.trim()) throw new Error("Pesan tidak boleh kosong");
+    if (!Array.isArray(attachments)) throw new Error("Daftar lampiran tidak valid");
+    if (!text.trim() && !attachments.length) throw new Error("Pesan atau berkas harus diisi");
 
     if (!this.sock || this.state.connection !== "open") {
       throw new Error("WhatsApp belum terhubung");
     }
 
     const jid = `${number}@s.whatsapp.net`;
-    const result = await this.sock.sendMessage(jid, { text });
+    const files = attachments.map((attachment) => {
+      const filePath = typeof attachment?.path === "string" ? attachment.path : "";
+      const type = getAttachmentType(filePath);
+      if (!path.isAbsolute(filePath) || !type) {
+        throw new Error(`Berkas lampiran tidak valid: ${attachment?.name || "tanpa nama"}`);
+      }
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        throw new Error(`Berkas tidak ditemukan: ${path.basename(filePath)}`);
+      }
+      return { path: filePath, name: path.basename(filePath), ...type };
+    });
+
+    if (!text.trim() && !files.length) throw new Error("Pesan atau berkas harus diisi");
+
+    let result;
+    const captionIndex = text.trim()
+      ? files.findIndex((file) => file.kind !== "audio")
+      : -1;
+    if (text.trim() && captionIndex === -1) {
+      result = await this.sock.sendMessage(jid, { text });
+    }
+
+    for (const [index, file] of files.entries()) {
+      const caption = index === captionIndex ? text : undefined;
+      const media =
+        file.kind === "image"
+          ? { image: { url: file.path }, ...(caption ? { caption } : {}) }
+          : file.kind === "video"
+            ? { video: { url: file.path }, ...(caption ? { caption } : {}) }
+            : file.kind === "audio"
+              ? { audio: { url: file.path }, mimetype: file.mimeType }
+              : {
+                  document: { url: file.path },
+                  mimetype: file.mimeType,
+                  fileName: file.name,
+                  ...(caption ? { caption } : {}),
+                };
+      result = await this.sock.sendMessage(jid, media);
+    }
 
     return {
       ok: true,

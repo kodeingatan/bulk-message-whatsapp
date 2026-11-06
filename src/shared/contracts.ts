@@ -1,4 +1,13 @@
 export type RowStatus = "pending" | "sending" | "sent" | "failed";
+export type AttachmentKind = "image" | "video" | "audio" | "document";
+
+export interface MessageAttachment {
+  path: string;
+  name: string;
+  mimeType: string;
+  kind: AttachmentKind;
+}
+
 export type WAConnection =
   | "idle"
   | "connecting"
@@ -17,6 +26,7 @@ export interface ContactRow {
   sentAt: string;
   error: string;
   sourceData?: Record<string, string>;
+  attachments?: MessageAttachment[];
 }
 
 export interface MessageDataset {
@@ -61,12 +71,17 @@ export interface BulkWAAPI {
   status(): Promise<WhatsAppState>;
   logout(): Promise<WhatsAppState>;
   reset(): Promise<WhatsAppState>;
-  send(payload: { phone: string; message: string }): Promise<OperationResult>;
+  send(payload: {
+    phone: string;
+    message: string;
+    attachments?: MessageAttachment[];
+  }): Promise<OperationResult>;
   loadRows(): Promise<{ rows: ContactRow[] }>;
   saveRows(rows: ContactRow[]): Promise<OperationResult>;
   loadDatasets(): Promise<{ datasets: MessageDataset[] }>;
   saveDatasets(datasets: MessageDataset[]): Promise<OperationResult>;
   selectImportFile(): Promise<ImportResult>;
+  selectAttachments(): Promise<{ canceled?: boolean; attachments?: MessageAttachment[]; error?: string }>;
   importSheet(importId: string, sheetName: string): Promise<ImportResult>;
   exportRows(rows: ContactRow[], sheetName: string): Promise<ExportResult>;
   copyText(text: string): void;

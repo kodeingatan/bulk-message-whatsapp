@@ -12,6 +12,7 @@ const api: BulkWAAPI = {
   loadDatasets: () => ipcRenderer.invoke("datasets:load"),
   saveDatasets: (datasets) => ipcRenderer.invoke("datasets:save", datasets),
   selectImportFile: () => ipcRenderer.invoke("rows:import:select"),
+  selectAttachments: () => ipcRenderer.invoke("attachments:select"),
   importSheet: (importId, sheetName) =>
     ipcRenderer.invoke("rows:import:sheet", importId, sheetName),
   exportRows: (rows, sheetName) => ipcRenderer.invoke("rows:export", rows, sheetName),

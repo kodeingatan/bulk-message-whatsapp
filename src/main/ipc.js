@@ -1,5 +1,6 @@
 import { ipcMain } from "electron";
 import { exportExcel, importExcel, selectImportFile } from "./services/excel-service.js";
+import { selectAttachments } from "./services/attachment-service.js";
 
 export function registerIpcHandlers({ getWindow, whatsapp, rowsStore }) {
   ipcMain.handle("wa:connect", async () => whatsapp.connect());
@@ -9,7 +10,7 @@ export function registerIpcHandlers({ getWindow, whatsapp, rowsStore }) {
 
   ipcMain.handle("wa:send", async (_event, payload) => {
     try {
-      return await whatsapp.send(payload?.phone, payload?.message);
+      return await whatsapp.send(payload?.phone, payload?.message, payload?.attachments);
     } catch (error) {
       return { ok: false, error: error?.message || String(error) };
     }
@@ -24,6 +25,14 @@ export function registerIpcHandlers({ getWindow, whatsapp, rowsStore }) {
   ipcMain.handle("datasets:save", async (_event, datasets) => rowsStore.saveDatasets(datasets));
 
   ipcMain.handle("rows:import:select", async () => selectImportFile(getWindow()));
+
+  ipcMain.handle("attachments:select", async () => {
+    try {
+      return await selectAttachments(getWindow());
+    } catch (error) {
+      return { canceled: false, error: error?.message || String(error) };
+    }
+  });
 
   ipcMain.handle("rows:import:sheet", async (_event, importId, sheetName) =>
     importExcel(importId, sheetName),

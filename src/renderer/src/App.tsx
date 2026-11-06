@@ -17,6 +17,7 @@ import {
   Italic,
   List,
   MessageCircle,
+  Paperclip,
   Plus,
   Pencil,
   Quote,
@@ -33,6 +34,7 @@ import {
 } from "lucide-react";
 import type {
   ContactRow,
+  MessageAttachment,
   ImportResult,
   MessageDataset,
   RowStatus,
@@ -170,6 +172,18 @@ function getImportedRecipient(sourceData?: Record<string, string>) {
 
 function normalizeRow(row: Partial<ContactRow>): ContactRow {
   const validStatus: RowStatus[] = ["pending", "sent", "failed"];
+  const attachments: MessageAttachment[] = Array.isArray(row.attachments)
+    ? row.attachments.filter(
+        (attachment): attachment is MessageAttachment =>
+          Boolean(
+            attachment &&
+              typeof attachment.path === "string" &&
+              typeof attachment.name === "string" &&
+              typeof attachment.mimeType === "string" &&
+              ["image", "video", "audio", "document"].includes(attachment.kind),
+          ),
+      )
+    : [];
   return {
     id: typeof row.id === "string" && row.id ? row.id : uid(),
     phone: String(row.phone ?? ""),
@@ -178,6 +192,7 @@ function normalizeRow(row: Partial<ContactRow>): ContactRow {
     status: validStatus.includes(row.status as RowStatus) ? (row.status as RowStatus) : "pending",
     sentAt: String(row.sentAt ?? ""),
     error: String(row.error ?? ""),
+    attachments,
     sourceData:
       row.sourceData && typeof row.sourceData === "object" && !Array.isArray(row.sourceData)
         ? Object.fromEntries(
@@ -353,6 +368,7 @@ export function App() {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [delay, setDelay] = useState(15);
   const [skipSent, setSkipSent] = useState(true);
+  const [sharedAttachments, setSharedAttachments] = useState<MessageAttachment[]>([]);
   const [clipboardText, setClipboardText] = useState("");
   const stopRequested = useRef(false);
   const waRef = useRef(wa);
@@ -1161,6 +1177,34 @@ export function App() {
     updateRows((current) => current.map((row) => (row.id === id ? { ...row, ...update } : row)));
   }, [updateRows]);
 
+  const chooseAttachments = useCallback(async (row?: ContactRow) => {
+    if (sending) return;
+    try {
+      const result = await window.bulkWA.selectAttachments();
+      if (result?.canceled) return;
+      if (result?.error) {
+        toast(result.error, "error");
+        return;
+      }
+      const selected = result?.attachments ?? [];
+      if (!selected.length) return;
+      const mergeAttachments = (current: MessageAttachment[]) => {
+        const byPath = new Map(current.map((attachment) => [attachment.path, attachment]));
+        for (const attachment of selected) byPath.set(attachment.path, attachment);
+        return [...byPath.values()];
+      };
+      if (row) {
+        patchRow(row.id, { attachments: mergeAttachments(row.attachments ?? []) });
+        toast(`${selected.length} berkas ditambahkan ke baris.`, "success");
+      } else {
+        setSharedAttachments(mergeAttachments);
+        toast(`${selected.length} berkas ditambahkan ke lampiran bersama.`, "success");
+      }
+    } catch (error) {
+      toast(`Gagal memilih berkas: ${errorMessage(error)}`, "error");
+    }
+  }, [patchRow, sending, toast]);
+
   const resetRow = useCallback(
     (rowIndex: number) => {
       if (sending) {
@@ -1229,9 +1273,14 @@ export function App() {
 
         let result;
         try {
+          const attachments = [...sharedAttachments, ...(row.attachments ?? [])].filter(
+            (attachment, attachmentIndex, all) =>
+              all.findIndex((candidate) => candidate.path === attachment.path) === attachmentIndex,
+          );
           result = await window.bulkWA.send({
             phone: row.phone,
             message: resolveMessageTemplate(row.message, row.sourceData),
+            attachments,
           });
         } catch (error) {
           result = { ok: false, error: errorMessage(error) };
@@ -1267,7 +1316,7 @@ export function App() {
       addLog(summary, kind);
       toast(summary, kind, 6000);
     },
-    [addLog, delay, patchRow, sending, toast],
+    [addLog, delay, patchRow, sending, sharedAttachments, toast],
   );
 
   const startBulkSend = useCallback(async () => {
@@ -1278,13 +1327,16 @@ export function App() {
       return;
     }
     const targets = rows.filter(
-      (row) => row.phone.trim() && row.message.trim() && (!skipSent || row.status !== "sent"),
+      (row) =>
+        row.phone.trim() &&
+        (row.message.trim() || sharedAttachments.length > 0 || (row.attachments?.length ?? 0) > 0) &&
+        (!skipSent || row.status !== "sent"),
     );
     if (!targets.length) {
       toast(
         skipSent
           ? "Tidak ada pesan yang perlu dikirim. Semua baris valid sudah terkirim."
-          : "Tidak ada baris valid. Isi WA Number dan WA Message terlebih dahulu.",
+          : "Tidak ada baris valid. Isi WA Number dan WA Message atau pilih berkas lampiran.",
       );
       return;
     }
@@ -1295,7 +1347,7 @@ export function App() {
       confirmText: `Kirim ${targets.length} pesan`,
     });
     if (ok) await runSend(targets);
-  }, [confirm, delay, rows, runSend, sending, skipSent, toast, wa.connection]);
+  }, [confirm, delay, rows, runSend, sending, sharedAttachments.length, skipSent, toast, wa.connection]);
 
   const sendCheckedRows = useCallback(async () => {
     if (sending) return;
@@ -1308,14 +1360,14 @@ export function App() {
     const targets = checkedRows.filter(
       (row) =>
         row.phone.trim() &&
-        row.message.trim() &&
+        (row.message.trim() || sharedAttachments.length > 0 || (row.attachments?.length ?? 0) > 0) &&
         (!skipSent || row.status !== "sent"),
     );
     if (!targets.length) {
       toast(
         skipSent
           ? "Tidak ada pesan valid yang dipilih untuk dikirim. Pesan terkirim akan dilewati."
-          : "Tidak ada baris valid yang dipilih. Lengkapi WA Number dan WA Message.",
+          : "Tidak ada baris valid yang dipilih. Lengkapi WA Number dan pesan atau lampiran.",
         "info",
       );
       return;
@@ -1328,7 +1380,7 @@ export function App() {
       confirmText: `Kirim ${targets.length} pesan`,
     });
     if (ok) await runSend(targets);
-  }, [checkedRows, confirm, delay, runSend, sending, skipSent, toast, wa.connection]);
+  }, [checkedRows, confirm, delay, runSend, sending, sharedAttachments.length, skipSent, toast, wa.connection]);
 
   const deleteCheckedRows = useCallback(async () => {
     if (sending || !checkedRows.length) return;
@@ -1359,13 +1411,13 @@ export function App() {
         return;
       }
       const row = rows[rowIndex];
-      if (!row?.phone.trim() || !row.message.trim()) {
-        toast("Lengkapi WA Number dan WA Message terlebih dahulu.", "info");
+      if (!row?.phone.trim() || (!row.message.trim() && !sharedAttachments.length && !row.attachments?.length)) {
+        toast("Isi WA Number dan WA Message atau pilih berkas lampiran terlebih dahulu.", "info");
         return;
       }
       await runSend([row]);
     },
-    [rows, runSend, sending, toast, wa.connection],
+    [rows, runSend, sending, sharedAttachments.length, toast, wa.connection],
   );
 
   const importExcel = useCallback(async () => {
@@ -2030,6 +2082,26 @@ export function App() {
                       </Button>
                     </>
                   )}
+                  <Button
+                    variant="outline"
+                    disabled={sending}
+                    title={sharedAttachments.map((attachment) => attachment.name).join("\n") || "Lampirkan berkas untuk semua pesan"}
+                    onClick={() => void chooseAttachments()}
+                  >
+                    <Paperclip />Lampiran Bersama{sharedAttachments.length ? ` (${sharedAttachments.length})` : ""}
+                  </Button>
+                  {sharedAttachments.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      disabled={sending}
+                      aria-label="Hapus semua lampiran bersama"
+                      title="Hapus semua lampiran bersama"
+                      onClick={() => setSharedAttachments([])}
+                    >
+                      <X />
+                    </Button>
+                  )}
                   <Button variant="outline" disabled={sending} onClick={() => void importExcel()}><FileUp />Import Excel</Button>
                   <Button variant="outline" disabled={sending} onClick={() => void exportExcel()}><FileDown />Export Excel</Button>
                 </div>
@@ -2241,6 +2313,37 @@ export function App() {
                             >
                               <Pencil />
                             </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="size-8 shrink-0 text-muted-foreground"
+                              aria-label={`Lampirkan berkas untuk baris ${rowIndex + 1}`}
+                              title={row.attachments?.length
+                                ? row.attachments.map((attachment) => attachment.name).join("\n")
+                                : "Lampirkan berkas untuk baris ini"}
+                              disabled={sending}
+                              onClick={() => void chooseAttachments(row)}
+                            >
+                              <span className="flex items-center gap-0.5">
+                                <Paperclip />
+                                {Boolean(row.attachments?.length) && (
+                                  <span className="text-[10px] leading-none">{row.attachments?.length}</span>
+                                )}
+                              </span>
+                            </Button>
+                            {Boolean(row.attachments?.length) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-8 shrink-0 text-muted-foreground"
+                                aria-label={`Hapus lampiran baris ${rowIndex + 1}`}
+                                title="Hapus lampiran dari baris ini"
+                                disabled={sending}
+                                onClick={() => patchRow(row.id, { attachments: [] })}
+                              >
+                                <X />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell data-grid-cell={`${rowIndex}:3`} className={cellClass(selection, active, rowIndex, 3)} onClick={() => setCellSelection({ row: rowIndex, col: 3 })}><Badge variant={statusStyle(row.status)}>{statusLabels[row.status]}</Badge></TableCell>

@@ -202,5 +202,17 @@ export function sanitizeRow(row) {
     sentAt: String(row?.sentAt ?? ""),
     error: String(row?.error ?? ""),
     ...(sourceData ? { sourceData } : {}),
+    ...(Array.isArray(row?.attachments)
+      ? {
+          attachments: row.attachments
+            .filter((attachment) => attachment && typeof attachment.path === "string")
+            .map((attachment) => ({
+              path: attachment.path,
+              name: String(attachment.name ?? ""),
+              mimeType: String(attachment.mimeType ?? ""),
+              kind: String(attachment.kind ?? "document"),
+            })),
+        }
+      : {}),
   };
 }
