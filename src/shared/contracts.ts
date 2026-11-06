@@ -72,6 +72,8 @@ export interface ResponseCaptureEvent {
 export type ResponseMediaType = "image" | "video" | "audio" | "document" | "sticker";
 
 export interface ResponseCaptureSettings {
+  saveTextMessages: boolean;
+  saveFiles: boolean;
   textMode: "template" | "regex";
   textPattern: string;
   mediaTypes: ResponseMediaType[];

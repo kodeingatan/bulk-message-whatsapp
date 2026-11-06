@@ -131,6 +131,8 @@ type CustomDataEditor = {
 const MAX_ROWS = 10_000;
 const CUSTOM_DATA_PAGE_SIZE = 50;
 const DEFAULT_RESPONSE_SETTINGS: ResponseCaptureSettings = {
+  saveTextMessages: true,
+  saveFiles: true,
   textMode: "template",
   textPattern: "",
   mediaTypes: ["image", "video", "audio", "document", "sticker"],
@@ -2871,16 +2873,36 @@ export function App() {
           <DialogHeader>
             <DialogTitle>Pengaturan Simpan Balasan</DialogTitle>
             <DialogDescription>
-              Atur teks dan berkas masuk yang boleh disimpan. Pola dicocokkan tanpa membedakan huruf besar-kecil.
+              Atur penyimpanan teks dan berkas secara terpisah. Pengaturan ini hanya berlaku untuk nomor dengan
+              checkbox Simpan Balasan yang aktif pada tabel. Pola dicocokkan tanpa membedakan huruf besar-kecil.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-5">
             <section className="space-y-2">
+              <label className="flex items-start gap-2 rounded-md border border-slate-200 p-3 text-sm">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={responseSettingsDraft.saveTextMessages}
+                  onCheckedChange={(checked) =>
+                    setResponseSettingsDraft((current) => ({
+                      ...current,
+                      saveTextMessages: checked === true,
+                    }))
+                  }
+                />
+                <span>
+                  <span className="block font-medium text-slate-800">Simpan pesan teks</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    Jika dinonaktifkan, pesan teks dan caption tidak akan disimpan.
+                  </span>
+                </span>
+              </label>
               <label className="text-sm font-medium text-slate-800" htmlFor="response-text-mode">
                 Cara mencocokkan pesan
               </label>
               <Select
                 value={responseSettingsDraft.textMode}
+                disabled={!responseSettingsDraft.saveTextMessages}
                 onValueChange={(value: "template" | "regex") =>
                   setResponseSettingsDraft((current) => ({ ...current, textMode: value }))
                 }
@@ -2894,7 +2916,7 @@ export function App() {
                 </SelectContent>
               </Select>
               {responseSettingsDraft.textMode === "template" ? (
-                <>
+                <div className={responseSettingsDraft.saveTextMessages ? "space-y-2" : "space-y-2 opacity-50"}>
                   <label className="text-sm font-medium text-slate-800" htmlFor="response-text-pattern">
                     Format pesan yang harus diikuti
                   </label>
@@ -2904,6 +2926,7 @@ export function App() {
                     maxLength={200}
                     placeholder={"nama : ...\nalamat : ...\nkeluhan : ..."}
                     value={responseSettingsDraft.textPattern}
+                    disabled={!responseSettingsDraft.saveTextMessages}
                     onChange={(event) =>
                       setResponseSettingsDraft((current) => ({
                         ...current,
@@ -2926,9 +2949,9 @@ export function App() {
                       lampiran tetap mengikuti filter jenis dan nama file.
                     </p>
                   </div>
-                </>
+                </div>
               ) : (
-                <>
+                <div className={responseSettingsDraft.saveTextMessages ? "space-y-2" : "space-y-2 opacity-50"}>
                   <label className="text-sm font-medium text-slate-800" htmlFor="response-text-pattern">
                     Pola teks (RegExp)
                   </label>
@@ -2938,6 +2961,7 @@ export function App() {
                     maxLength={200}
                     placeholder="Kosongkan untuk menerima semua teks"
                     value={responseSettingsDraft.textPattern}
+                    disabled={!responseSettingsDraft.saveTextMessages}
                     onChange={(event) =>
                       setResponseSettingsDraft((current) => ({
                         ...current,
@@ -2949,15 +2973,36 @@ export function App() {
                     Contoh RegExp untuk form: <code>^Nama:\s*.+\nNomor:\s*\d+$</code>.
                     Teks/caption yang tidak cocok tidak disimpan.
                   </p>
-                </>
+                </div>
               )}
             </section>
             <section className="space-y-2">
-              <p className="text-sm font-medium text-slate-800">Jenis berkas yang diizinkan</p>
+              <label className="flex items-start gap-2 rounded-md border border-slate-200 p-3 text-sm">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={responseSettingsDraft.saveFiles}
+                  onCheckedChange={(checked) =>
+                    setResponseSettingsDraft((current) => ({
+                      ...current,
+                      saveFiles: checked === true,
+                    }))
+                  }
+                />
+                <span>
+                  <span className="block font-medium text-slate-800">Simpan berkas masuk</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    Jika dinonaktifkan, lampiran tidak akan diunduh atau disimpan.
+                  </span>
+                </span>
+              </label>
+              <p className={`text-sm font-medium text-slate-800 ${responseSettingsDraft.saveFiles ? "" : "opacity-50"}`}>
+                Jenis berkas yang diizinkan
+              </p>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {(Object.keys(responseMediaTypeLabels) as ResponseMediaType[]).map((type) => (
-                  <label key={type} className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm">
+                  <label key={type} className={`flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm ${responseSettingsDraft.saveFiles ? "" : "opacity-50"}`}>
                     <Checkbox
+                      disabled={!responseSettingsDraft.saveFiles}
                       checked={responseSettingsDraft.mediaTypes.includes(type)}
                       onCheckedChange={(checked) =>
                         setResponseSettingsDraft((current) => ({
@@ -2972,7 +3017,7 @@ export function App() {
                   </label>
                 ))}
               </div>
-              <p className="text-xs text-slate-500">
+              <p className={`text-xs text-slate-500 ${responseSettingsDraft.saveFiles ? "" : "opacity-50"}`}>
                 Jika semua jenis tidak dipilih, tidak ada berkas yang disimpan.
               </p>
             </section>
@@ -2985,6 +3030,7 @@ export function App() {
                 maxLength={200}
                 placeholder="Contoh: ^formulir_.*\.pdf$"
                 value={responseSettingsDraft.fileNamePattern}
+                disabled={!responseSettingsDraft.saveFiles}
                 onChange={(event) =>
                   setResponseSettingsDraft((current) => ({
                     ...current,
@@ -2992,7 +3038,7 @@ export function App() {
                   }))
                 }
               />
-              <p className="text-xs leading-5 text-slate-500">
+              <p className={`text-xs leading-5 text-slate-500 ${responseSettingsDraft.saveFiles ? "" : "opacity-50"}`}>
                 Kosongkan untuk menerima nama apa pun. Pola yang diisi hanya menerima nama file yang cocok.
                 Berkas tanpa nama asli dicocokkan menggunakan nama file otomatis.
               </p>

@@ -5,6 +5,8 @@ import { normalizePhone } from "../utils/phone.js";
 
 const MEDIA_TYPES = ["image", "video", "audio", "document", "sticker"];
 const DEFAULT_SETTINGS = {
+  saveTextMessages: true,
+  saveFiles: true,
   textMode: "template",
   textPattern: "",
   mediaTypes: MEDIA_TYPES,
@@ -43,6 +45,8 @@ function normalizeSettings(settings) {
   }
 
   return {
+    saveTextMessages: typeof settings.saveTextMessages === "boolean" ? settings.saveTextMessages : true,
+    saveFiles: typeof settings.saveFiles === "boolean" ? settings.saveFiles : true,
     textMode,
     textPattern,
     mediaTypes: [...new Set(settings.mediaTypes)],
@@ -66,6 +70,10 @@ function getTemplateFields(template) {
     throw new Error("Nama field pada format pesan tidak boleh duplikat.");
   }
   return labels;
+}
+
+function matchesPattern(pattern, value) {
+  return !pattern || new RegExp(pattern, "i").test(value);
 }
 
 function matchesText(text, settings) {
@@ -299,13 +307,17 @@ export class ResponseStore {
 
     const content = unwrapMessage(message);
     const originalText = getMessageText(content);
-    const text = matchesText(originalText, this.settings) ? originalText : "";
+    const text =
+      this.settings.saveTextMessages && matchesText(originalText, this.settings)
+        ? originalText
+        : "";
     const incomingMedia = getMedia(content);
     const originalFileName = incomingMedia
       ? path.basename(String(incomingMedia.message.fileName ?? ""))
       : "";
     const nameForMatching = originalFileName || (incomingMedia ? getFileName(incomingMedia.message, messageId, 0) : "");
     const media =
+      this.settings.saveFiles &&
       incomingMedia &&
       this.settings.mediaTypes.includes(incomingMedia.type) &&
       matchesPattern(this.settings.fileNamePattern, nameForMatching)
