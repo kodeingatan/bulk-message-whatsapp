@@ -6,29 +6,15 @@ import { Boom } from "@hapi/boom";
 import {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   makeWASocket,
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
 import { getAttachmentType } from "./attachment-types.js";
+import { normalizePhone } from "../utils/phone.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-export function normalizePhone(raw) {
-  if (raw === null || raw === undefined) return "";
-
-  let phone = String(raw).trim();
-  if (!phone) return "";
-
-  phone = phone.replace(/^whatsapp:/i, "").replace(/@.*$/, "");
-  phone = phone.replace(/\D/g, "");
-
-  if (!phone) return "";
-  if (phone.startsWith("0")) phone = `62${phone.slice(1)}`;
-  else if (/^8\d{7,11}$/.test(phone)) phone = `62${phone}`;
-
-  return phone;
-}
 
 export function formatJidNumber(jid) {
   if (!jid) return "";
@@ -36,9 +22,11 @@ export function formatJidNumber(jid) {
 }
 
 export class WhatsAppService {
-  constructor({ authDir, onEvent = () => {} }) {
+  constructor({ authDir, onEvent = () => {}, onIncomingMessage = () => {}, onIncomingError = () => {} }) {
     this.authDir = authDir;
     this.onEvent = onEvent;
+    this.onIncomingMessage = onIncomingMessage;
+    this.onIncomingError = onIncomingError;
     this.sock = null;
     this.connecting = false;
     this.manualClose = false;
@@ -81,6 +69,7 @@ export class WhatsAppService {
     try {
       fs.mkdirSync(this.authDir, { recursive: true });
       const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+      const logger = pino({ level: "silent" });
 
       let version;
       try {
@@ -93,7 +82,7 @@ export class WhatsAppService {
       const sock = makeWASocket({
         auth: state,
         version,
-        logger: pino({ level: "silent" }),
+        logger,
         browser: Browsers.ubuntu("Chrome"),
         markOnlineOnConnect: false,
         syncFullHistory: false,
@@ -117,6 +106,28 @@ export class WhatsAppService {
       sock.ev.on("creds.update", saveCreds);
       sock.ev.on("connection.update", (update) => {
         this.handleConnectionUpdate(update, sock).catch(() => {});
+      });
+      sock.ev.on("messages.upsert", ({ messages = [], type } = {}) => {
+        if (type !== "notify") return;
+        for (const message of messages) {
+          Promise.resolve()
+            .then(() =>
+              this.onIncomingMessage(message, (mediaMessage) =>
+                downloadMediaMessage(mediaMessage, "buffer", {}, {
+                  logger,
+                  reuploadRequest: sock.updateMediaMessage,
+                }),
+              ),
+            )
+            .catch((error) => {
+              console.error("Gagal menyimpan pesan balasan:", error?.message || error);
+              this.onIncomingError({
+                ok: false,
+                phone: formatJidNumber(message?.key?.remoteJid),
+                error: error?.message || String(error),
+              });
+            });
+        }
       });
 
       return this.getState();

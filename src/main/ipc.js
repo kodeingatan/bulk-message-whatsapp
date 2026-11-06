@@ -1,8 +1,8 @@
-import { ipcMain } from "electron";
+import { ipcMain, shell } from "electron";
 import { exportExcel, importExcel, selectImportFile } from "./services/excel-service.js";
 import { selectAttachments } from "./services/attachment-service.js";
 
-export function registerIpcHandlers({ getWindow, whatsapp, rowsStore }) {
+export function registerIpcHandlers({ getWindow, whatsapp, rowsStore, responseStore }) {
   ipcMain.handle("wa:connect", async () => whatsapp.connect());
   ipcMain.handle("wa:status", async () => whatsapp.getState());
   ipcMain.handle("wa:logout", async () => whatsapp.logout());
@@ -31,6 +31,27 @@ export function registerIpcHandlers({ getWindow, whatsapp, rowsStore }) {
       return await selectAttachments(getWindow());
     } catch (error) {
       return { canceled: false, error: error?.message || String(error) };
+    }
+  });
+
+  ipcMain.handle("responses:open-folder", async () => {
+    try {
+      const error = await responseStore.openFolder(shell);
+      return error ? { ok: false, error } : { ok: true };
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
+    }
+  });
+
+  ipcMain.handle("responses:get-settings", () => ({
+    settings: responseStore.getSettings(),
+  }));
+
+  ipcMain.handle("responses:save-settings", async (_event, settings) => {
+    try {
+      return responseStore.saveSettings(settings);
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) };
     }
   });
 

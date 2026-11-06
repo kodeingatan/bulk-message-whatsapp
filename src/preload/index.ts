@@ -13,6 +13,9 @@ const api: BulkWAAPI = {
   saveDatasets: (datasets) => ipcRenderer.invoke("datasets:save", datasets),
   selectImportFile: () => ipcRenderer.invoke("rows:import:select"),
   selectAttachments: () => ipcRenderer.invoke("attachments:select"),
+  openResponsesFolder: () => ipcRenderer.invoke("responses:open-folder"),
+  getResponseCaptureSettings: () => ipcRenderer.invoke("responses:get-settings"),
+  saveResponseCaptureSettings: (settings) => ipcRenderer.invoke("responses:save-settings", settings),
   importSheet: (importId, sheetName) =>
     ipcRenderer.invoke("rows:import:sheet", importId, sheetName),
   exportRows: (rows, sheetName) => ipcRenderer.invoke("rows:export", rows, sheetName),
@@ -22,6 +25,12 @@ const api: BulkWAAPI = {
       callback(payload);
     ipcRenderer.on("wa:event", listener);
     return () => ipcRenderer.removeListener("wa:event", listener);
+  },
+  onResponseCapture: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: Parameters<typeof callback>[0]) =>
+      callback(payload);
+    ipcRenderer.on("wa:response-capture", listener);
+    return () => ipcRenderer.removeListener("wa:response-capture", listener);
   },
 };
 

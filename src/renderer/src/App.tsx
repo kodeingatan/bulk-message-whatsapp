@@ -17,6 +17,7 @@ import {
   Italic,
   List,
   MessageCircle,
+  MessageSquareText,
   Paperclip,
   Plus,
   Pencil,
@@ -24,6 +25,7 @@ import {
   Redo2,
   RefreshCw,
   Send,
+  Settings2,
   Strikethrough,
   Table2,
   Trash2,
@@ -37,6 +39,9 @@ import type {
   MessageAttachment,
   ImportResult,
   MessageDataset,
+  ResponseCaptureEvent,
+  ResponseCaptureSettings,
+  ResponseMediaType,
   RowStatus,
   WhatsAppState,
 } from "../../shared/contracts.js";
@@ -125,6 +130,19 @@ type CustomDataEditor = {
 
 const MAX_ROWS = 10_000;
 const CUSTOM_DATA_PAGE_SIZE = 50;
+const DEFAULT_RESPONSE_SETTINGS: ResponseCaptureSettings = {
+  textMode: "template",
+  textPattern: "",
+  mediaTypes: ["image", "video", "audio", "document", "sticker"],
+  fileNamePattern: "",
+};
+const responseMediaTypeLabels: Record<ResponseMediaType, string> = {
+  image: "Gambar",
+  video: "Video",
+  audio: "Audio",
+  document: "Dokumen",
+  sticker: "Stiker",
+};
 const columns = ["WA Number", "Penerima", "WA Message", "Status", "Terkirim Pada", "Keterangan"];
 const initialColumnWidths = [48, 180, 220, 380, 132, 164, 240, 136];
 const gridColumnToTableColumn = [2, 3, 4, 5, 6, 7];
@@ -157,7 +175,16 @@ function validateDatasetName(value: string) {
 }
 
 function newRow(): ContactRow {
-  return { id: uid(), phone: "", recipient: "", message: "", status: "pending", sentAt: "", error: "" };
+  return {
+    id: uid(),
+    phone: "",
+    recipient: "",
+    message: "",
+    status: "pending",
+    sentAt: "",
+    error: "",
+    saveResponse: false,
+  };
 }
 
 function getImportedRecipient(sourceData?: Record<string, string>) {
@@ -201,6 +228,7 @@ function normalizeRow(row: Partial<ContactRow>): ContactRow {
     sentAt: String(row.sentAt ?? ""),
     error: String(row.error ?? ""),
     attachments,
+    saveResponse: row.saveResponse === true,
     sourceData:
       row.sourceData && typeof row.sourceData === "object" && !Array.isArray(row.sourceData)
         ? Object.fromEntries(
@@ -343,6 +371,12 @@ function isSelected(selection: Selection | null, row: number, col: number) {
 export function App() {
   const [page, setPage] = useState<Page>("whatsapp");
   const [datasets, setDatasets] = useState<MessageDataset[]>([]);
+  const [responseSettings, setResponseSettings] =
+    useState<ResponseCaptureSettings>(DEFAULT_RESPONSE_SETTINGS);
+  const [responseSettingsDraft, setResponseSettingsDraft] =
+    useState<ResponseCaptureSettings>(DEFAULT_RESPONSE_SETTINGS);
+  const [responseSettingsOpen, setResponseSettingsOpen] = useState(false);
+  const [savingResponseSettings, setSavingResponseSettings] = useState(false);
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const [datasetsLoaded, setDatasetsLoaded] = useState(false);
   const [wa, setWa] = useState<WhatsAppState>({
@@ -517,6 +551,19 @@ export function App() {
     const unsubscribe = window.bulkWA.onWAEvent((event) => {
       if (mounted) setWa(event);
     });
+      const unsubscribeResponses = window.bulkWA.onResponseCapture((event: ResponseCaptureEvent) => {
+        if (!mounted) return;
+        if (event.ok) {
+          const recipient = event.recipient || `+${event.phone}`;
+          addLog(`Balasan dari ${recipient} disimpan.`, "success");
+          toast(`Balasan dari ${recipient} berhasil disimpan.`, "success");
+        } else {
+          const sender = event.phone ? `+${event.phone}` : "pengirim";
+          const error = event.error || "Kesalahan tidak diketahui";
+          addLog(`Gagal menyimpan balasan dari ${sender}: ${error}`, "error");
+          toast(`Gagal menyimpan balasan dari ${sender}: ${error}`, "error", 6000);
+        }
+      });
 
     void window.bulkWA
       .status()
@@ -525,6 +572,15 @@ export function App() {
       })
       .catch((error: unknown) => {
         if (mounted) toast(`Gagal memuat status WhatsApp: ${errorMessage(error)}`, "error");
+      });
+
+    void window.bulkWA
+      .getResponseCaptureSettings()
+      .then((result) => {
+        if (mounted && result?.settings) setResponseSettings(result.settings);
+      })
+      .catch((error: unknown) => {
+        if (mounted) toast(`Gagal memuat pengaturan simpan balasan: ${errorMessage(error)}`, "error");
       });
 
     void window.bulkWA
@@ -551,8 +607,9 @@ export function App() {
     return () => {
       mounted = false;
       unsubscribe();
+      unsubscribeResponses();
     };
-  }, [toast]);
+  }, [addLog, toast]);
 
   useEffect(() => {
     if (!datasetsLoaded) return;
@@ -644,6 +701,8 @@ export function App() {
     () => rows.filter((row) => checkedRowIds.has(row.id)),
     [checkedRowIds, rows],
   );
+  const responseEnabledCount = rows.filter((row) => row.saveResponse).length;
+  const checkedResponseEnabledCount = checkedRows.filter((row) => row.saveResponse).length;
   const allRowsChecked = rows.length > 0 && rows.every((row) => checkedRowIds.has(row.id));
   const someRowsChecked = checkedRows.length > 0 && !allRowsChecked;
 
@@ -1196,6 +1255,99 @@ export function App() {
   const patchRow = useCallback((id: string, update: Partial<ContactRow>) => {
     updateRows((current) => current.map((row) => (row.id === id ? { ...row, ...update } : row)));
   }, [updateRows]);
+
+  const setResponseCaptureForRows = useCallback((rowIds: Set<string> | null, enabled: boolean) => {
+    if (sending) return;
+    updateRows((current) =>
+      current.map((row) =>
+        (!rowIds || rowIds.has(row.id)) ? { ...row, saveResponse: enabled } : row,
+      ),
+    );
+    toast(
+      rowIds
+        ? `Simpan balasan ${enabled ? "diaktifkan" : "dinonaktifkan"} untuk ${rowIds.size} baris terpilih.`
+        : `Simpan balasan ${enabled ? "diaktifkan" : "dinonaktifkan"} untuk semua ${rows.length} baris.`,
+      "success",
+      3000,
+    );
+  }, [rows.length, sending, toast, updateRows]);
+
+  const openResponseFolder = useCallback(async () => {
+    try {
+      const result = await window.bulkWA.openResponsesFolder();
+      if (!result?.ok) {
+        toast(result?.error || "Gagal membuka folder balasan.", "error");
+        return;
+      }
+    } catch (error) {
+      toast(`Gagal membuka folder balasan: ${errorMessage(error)}`, "error");
+    }
+  }, [toast]);
+
+  const openResponseSettings = useCallback(() => {
+    setResponseSettingsDraft({
+      ...responseSettings,
+      mediaTypes: [...responseSettings.mediaTypes],
+    });
+    setResponseSettingsOpen(true);
+  }, [responseSettings]);
+
+  const saveResponseSettings = useCallback(async () => {
+    if (responseSettingsDraft.textMode === "template" && responseSettingsDraft.textPattern.trim()) {
+      const fieldLines = responseSettingsDraft.textPattern
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const labels = fieldLines.map((line) => {
+        const separatorIndex = line.indexOf(":");
+        const label = separatorIndex < 0 ? "" : line.slice(0, separatorIndex).trim();
+        const placeholder = separatorIndex < 0 ? "" : line.slice(separatorIndex + 1).trim();
+        return { label: label.replace(/\s+/g, " ").toLocaleLowerCase(), placeholder };
+      });
+      if (labels.some(({ label, placeholder }) => !label || placeholder !== "...")) {
+        toast('Format field harus ditulis "nama : ..." (satu field per baris).', "error");
+        return;
+      }
+      if (new Set(labels.map(({ label }) => label)).size !== labels.length) {
+        toast("Nama field pada format pesan tidak boleh duplikat.", "error");
+        return;
+      }
+    }
+
+    for (const [pattern, label] of [
+      ...(responseSettingsDraft.textMode === "regex"
+        ? [[responseSettingsDraft.textPattern, "Pola teks"] as const]
+        : []),
+      [responseSettingsDraft.fileNamePattern, "Pola nama file"],
+    ] as const) {
+      try {
+        if (pattern.length > 200) throw new Error("maksimal 200 karakter");
+        if (pattern) new RegExp(pattern, "i");
+      } catch (error) {
+        toast(`${label} tidak valid: ${errorMessage(error)}`, "error");
+        return;
+      }
+    }
+
+    setSavingResponseSettings(true);
+    try {
+      const result = await window.bulkWA.saveResponseCaptureSettings(responseSettingsDraft);
+      if (!result?.ok) {
+        toast(result?.error || "Gagal menyimpan pengaturan balasan.", "error");
+        return;
+      }
+      setResponseSettings({
+        ...responseSettingsDraft,
+        mediaTypes: [...responseSettingsDraft.mediaTypes],
+      });
+      setResponseSettingsOpen(false);
+      toast("Pengaturan simpan balasan berhasil disimpan.", "success");
+    } catch (error) {
+      toast(`Gagal menyimpan pengaturan balasan: ${errorMessage(error)}`, "error");
+    } finally {
+      setSavingResponseSettings(false);
+    }
+  }, [responseSettingsDraft, toast]);
 
   const chooseAttachments = useCallback(async (row?: ContactRow) => {
     if (sending) return;
@@ -2260,6 +2412,26 @@ export function App() {
                   <Button variant="outline" disabled={sending || !rows.length} onClick={() => void deleteRows(selection?.r1 ?? active?.row ?? 0, startSelection)}><Trash2 />Hapus Baris</Button>
                   {checkedRows.length > 0 && (
                     <>
+                      <label className="flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700">
+                        <Checkbox
+                          aria-label="Aktifkan simpan balasan untuk baris yang dipilih"
+                          checked={
+                            checkedResponseEnabledCount === checkedRows.length
+                              ? true
+                              : checkedResponseEnabledCount > 0
+                                ? "indeterminate"
+                                : false
+                          }
+                          disabled={sending}
+                          onCheckedChange={(checked) =>
+                            setResponseCaptureForRows(
+                              new Set(checkedRows.map((row) => row.id)),
+                              checked === true,
+                            )
+                          }
+                        />
+                        Simpan balasan dipilih
+                      </label>
                       <Button
                         variant="outline"
                         disabled={sending}
@@ -2276,6 +2448,37 @@ export function App() {
                       </Button>
                     </>
                   )}
+                  <label className="flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700">
+                    <Checkbox
+                      aria-label="Aktifkan simpan balasan untuk semua baris"
+                      checked={
+                        responseEnabledCount === rows.length && rows.length > 0
+                          ? true
+                          : responseEnabledCount > 0
+                            ? "indeterminate"
+                            : false
+                      }
+                      disabled={sending || !rows.length}
+                      onCheckedChange={(checked) => setResponseCaptureForRows(null, checked === true)}
+                    />
+                    Simpan balasan semua
+                  </label>
+                  <Button
+                    variant="outline"
+                    disabled={sending}
+                    title="Atur format teks dan berkas balasan yang disimpan"
+                    onClick={openResponseSettings}
+                  >
+                    <Settings2 />Filter Balasan
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={sending}
+                    title="Buka folder yang berisi file pesan balasan tersimpan"
+                    onClick={() => void openResponseFolder()}
+                  >
+                    <MessageSquareText />Buka folder balasan
+                  </Button>
                   <Button
                     variant="outline"
                     disabled={sending}
@@ -2411,6 +2614,19 @@ export function App() {
                         </TableCell>
                         <TableCell className="whitespace-nowrap border-r border-slate-100 px-2 py-1">
                           <div className="flex items-center gap-1">
+                            <span
+                              className="grid size-8 shrink-0 place-items-center"
+                              title={row.saveResponse ? "Simpan balasan aktif" : "Aktifkan simpan balasan"}
+                            >
+                              <Checkbox
+                                aria-label={`${row.saveResponse ? "Nonaktifkan" : "Aktifkan"} simpan balasan baris ${rowIndex + 1}`}
+                                checked={row.saveResponse === true}
+                                disabled={sending}
+                                onCheckedChange={(checked) =>
+                                  patchRow(row.id, { saveResponse: checked === true })
+                                }
+                              />
+                            </span>
                             <RowAction title="Kirim baris ini" disabled={sending} onClick={() => void sendSingle(rowIndex)}><Send /></RowAction>
                             <RowAction title="Tandai pending" disabled={sending} onClick={() => resetRow(rowIndex)}><RefreshCw /></RowAction>
                             <RowAction title="Hapus baris" disabled={sending} danger onClick={() => void deleteRows(rowIndex)}><Trash2 /></RowAction>
@@ -2649,6 +2865,152 @@ export function App() {
             </DialogFooter>
           </DialogContent>
         )}
+      </Dialog>
+      <Dialog open={responseSettingsOpen} onOpenChange={setResponseSettingsOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Pengaturan Simpan Balasan</DialogTitle>
+            <DialogDescription>
+              Atur teks dan berkas masuk yang boleh disimpan. Pola dicocokkan tanpa membedakan huruf besar-kecil.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-5">
+            <section className="space-y-2">
+              <label className="text-sm font-medium text-slate-800" htmlFor="response-text-mode">
+                Cara mencocokkan pesan
+              </label>
+              <Select
+                value={responseSettingsDraft.textMode}
+                onValueChange={(value: "template" | "regex") =>
+                  setResponseSettingsDraft((current) => ({ ...current, textMode: value }))
+                }
+              >
+                <SelectTrigger id="response-text-mode" aria-label="Cara mencocokkan format pesan">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="template">Format field (disarankan)</SelectItem>
+                  <SelectItem value="regex">RegExp (lanjutan)</SelectItem>
+                </SelectContent>
+              </Select>
+              {responseSettingsDraft.textMode === "template" ? (
+                <>
+                  <label className="text-sm font-medium text-slate-800" htmlFor="response-text-pattern">
+                    Format pesan yang harus diikuti
+                  </label>
+                  <Textarea
+                    id="response-text-pattern"
+                    rows={5}
+                    maxLength={200}
+                    placeholder={"nama : ...\nalamat : ...\nkeluhan : ..."}
+                    value={responseSettingsDraft.textPattern}
+                    onChange={(event) =>
+                      setResponseSettingsDraft((current) => ({
+                        ...current,
+                        textPattern: event.target.value,
+                      }))
+                    }
+                  />
+                  <div className="rounded-md bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                    <p className="font-medium text-slate-700">Cara mengisi</p>
+                    <ul className="mt-1 list-inside list-disc space-y-0.5">
+                      <li>Tulis satu nama field pada setiap baris, diikuti titik dua dan tiga titik.</li>
+                      <li>Pengirim mengganti <code>...</code> dengan nilainya, misalnya <code>nama : Sari</code>.</li>
+                      <li>Pesan harus berisi field yang sama, dalam urutan yang sama, dan tidak boleh ada nilai kosong.</li>
+                      <li>Spasi di sekitar titik dua dan huruf besar-kecil pada nama field boleh berbeda.</li>
+                    </ul>
+                    <p className="mt-2">Contoh format:</p>
+                    <pre className="mt-1 whitespace-pre-wrap rounded bg-white p-2">nama : ...{"\n"}alamat : ...{"\n"}keluhan : ...</pre>
+                    <p className="mt-2">
+                      Jika format dikosongkan, semua teks diterima. Balasan yang tidak cocok tidak disimpan;
+                      lampiran tetap mengikuti filter jenis dan nama file.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="text-sm font-medium text-slate-800" htmlFor="response-text-pattern">
+                    Pola teks (RegExp)
+                  </label>
+                  <Textarea
+                    id="response-text-pattern"
+                    rows={3}
+                    maxLength={200}
+                    placeholder="Kosongkan untuk menerima semua teks"
+                    value={responseSettingsDraft.textPattern}
+                    onChange={(event) =>
+                      setResponseSettingsDraft((current) => ({
+                        ...current,
+                        textPattern: event.target.value,
+                      }))
+                    }
+                  />
+                  <p className="text-xs leading-5 text-slate-500">
+                    Contoh RegExp untuk form: <code>^Nama:\s*.+\nNomor:\s*\d+$</code>.
+                    Teks/caption yang tidak cocok tidak disimpan.
+                  </p>
+                </>
+              )}
+            </section>
+            <section className="space-y-2">
+              <p className="text-sm font-medium text-slate-800">Jenis berkas yang diizinkan</p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {(Object.keys(responseMediaTypeLabels) as ResponseMediaType[]).map((type) => (
+                  <label key={type} className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm">
+                    <Checkbox
+                      checked={responseSettingsDraft.mediaTypes.includes(type)}
+                      onCheckedChange={(checked) =>
+                        setResponseSettingsDraft((current) => ({
+                          ...current,
+                          mediaTypes: checked
+                            ? [...new Set([...current.mediaTypes, type])]
+                            : current.mediaTypes.filter((item) => item !== type),
+                        }))
+                      }
+                    />
+                    {responseMediaTypeLabels[type]}
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">
+                Jika semua jenis tidak dipilih, tidak ada berkas yang disimpan.
+              </p>
+            </section>
+            <section className="space-y-2">
+              <label className="text-sm font-medium text-slate-800" htmlFor="response-file-pattern">
+                Pola nama file (RegExp)
+              </label>
+              <Input
+                id="response-file-pattern"
+                maxLength={200}
+                placeholder="Contoh: ^formulir_.*\.pdf$"
+                value={responseSettingsDraft.fileNamePattern}
+                onChange={(event) =>
+                  setResponseSettingsDraft((current) => ({
+                    ...current,
+                    fileNamePattern: event.target.value,
+                  }))
+                }
+              />
+              <p className="text-xs leading-5 text-slate-500">
+                Kosongkan untuk menerima nama apa pun. Pola yang diisi hanya menerima nama file yang cocok.
+                Berkas tanpa nama asli dicocokkan menggunakan nama file otomatis.
+              </p>
+            </section>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={savingResponseSettings}
+              onClick={() => setResponseSettingsOpen(false)}
+            >
+              Batal
+            </Button>
+            <Button disabled={savingResponseSettings} onClick={() => void saveResponseSettings()}>
+              {savingResponseSettings ? "Menyimpan..." : "Simpan Pengaturan"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
       <Dialog
         open={Boolean(customDataEditor)}

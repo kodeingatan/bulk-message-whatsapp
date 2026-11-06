@@ -27,6 +27,7 @@ export interface ContactRow {
   error: string;
   sourceData?: Record<string, string>;
   attachments?: MessageAttachment[];
+  saveResponse?: boolean;
 }
 
 export interface MessageDataset {
@@ -61,6 +62,22 @@ export interface OperationResult {
   error?: string;
 }
 
+export interface ResponseCaptureEvent {
+  ok: boolean;
+  phone: string;
+  recipient?: string;
+  error?: string;
+}
+
+export type ResponseMediaType = "image" | "video" | "audio" | "document" | "sticker";
+
+export interface ResponseCaptureSettings {
+  textMode: "template" | "regex";
+  textPattern: string;
+  mediaTypes: ResponseMediaType[];
+  fileNamePattern: string;
+}
+
 export interface ExportResult {
   canceled?: boolean;
   error?: string;
@@ -83,10 +100,14 @@ export interface BulkWAAPI {
   saveDatasets(datasets: MessageDataset[]): Promise<OperationResult>;
   selectImportFile(): Promise<ImportResult>;
   selectAttachments(): Promise<{ canceled?: boolean; attachments?: MessageAttachment[]; error?: string }>;
+  openResponsesFolder(): Promise<OperationResult>;
+  getResponseCaptureSettings(): Promise<{ settings: ResponseCaptureSettings }>;
+  saveResponseCaptureSettings(settings: ResponseCaptureSettings): Promise<OperationResult>;
   importSheet(importId: string, sheetName: string): Promise<ImportResult>;
   exportRows(rows: ContactRow[], sheetName: string): Promise<ExportResult>;
   copyText(text: string): void;
   onWAEvent(callback: (event: WhatsAppState & { type: "state" }) => void): () => void;
+  onResponseCapture(callback: (event: ResponseCaptureEvent) => void): () => void;
 }
 
 declare global {

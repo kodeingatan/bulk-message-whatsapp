@@ -220,6 +220,7 @@ export function sanitizeRow(row) {
     status: status === "sending" ? "pending" : status,
     sentAt: String(row?.sentAt ?? ""),
     error: String(row?.error ?? ""),
+    saveResponse: row?.saveResponse === true,
     ...(sourceData ? { sourceData } : {}),
     ...(Array.isArray(row?.attachments) ? { attachments: sanitizeAttachments(row.attachments) } : {}),
   };

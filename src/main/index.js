@@ -3,12 +3,14 @@ import { app, BrowserWindow, Menu } from "electron";
 import { registerIpcHandlers } from "./ipc.js";
 import { RowsStore } from "./services/rows-store.js";
 import { WhatsAppService } from "./services/whatsapp-service.js";
+import { ResponseStore } from "./services/response-store.js";
 import { getAppPaths } from "./utils/paths.js";
 import { createMainWindow } from "./window.js";
 
 let mainWindow = null;
 let whatsapp = null;
 let rowsStore = null;
+let responseStore = null;
 
 function createWindow() {
   mainWindow = createMainWindow({
@@ -41,11 +43,26 @@ if (!gotLock) {
 
     rowsStore = new RowsStore({ dataFile: paths.dataFile });
     rowsStore.load();
+    responseStore = new ResponseStore({
+      responsesDir: paths.responsesDir,
+      settingsFile: paths.responsesSettingsFile,
+      getDatasets: () => rowsStore.getDatasets(),
+      onCapture: (payload) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send("wa:response-capture", payload);
+      },
+    });
 
     Menu.setApplicationMenu(null);
 
     whatsapp = new WhatsAppService({
       authDir: paths.authDir,
+      onIncomingMessage: (message, downloadMedia) =>
+        responseStore.saveIncomingMessage(message, downloadMedia),
+      onIncomingError: (payload) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send("wa:response-capture", payload);
+      },
       onEvent: (payload) => {
         if (!mainWindow || mainWindow.isDestroyed()) return;
         mainWindow.webContents.send("wa:event", payload);
@@ -56,6 +73,7 @@ if (!gotLock) {
       getWindow: () => mainWindow,
       whatsapp,
       rowsStore,
+      responseStore,
     });
 
     createWindow();
