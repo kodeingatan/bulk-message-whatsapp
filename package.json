@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "electron-vite dev --watch",
     "build": "tsc --noEmit && electron-vite build",
+    "build:installer": "npm run build && electron-builder --win nsis --x64",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "start:cli": "node cli/index.js",
@@ -16,6 +17,40 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "build": {
+    "appId": "id.bulkmessagewhatsapp.desktop",
+    "productName": "Bulk WhatsApp",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "assets/bulk-wa.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "icon": "assets/bulk-wa.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/bulk-wa.ico",
+      "uninstallerIcon": "assets/bulk-wa.ico",
+      "installerHeaderIcon": "assets/bulk-wa.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@radix-ui/react-checkbox": "^1.4.1",
@@ -44,6 +79,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
     "electron": "^33.4.11",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
     "tailwindcss": "^4.3.4",
     "typescript": "^7.0.2"

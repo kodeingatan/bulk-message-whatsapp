@@ -1,4 +1,5 @@
-import { BrowserWindow } from "electron";
+import path from "node:path";
+import { app, BrowserWindow } from "electron";
 
 export function createMainWindow({ preloadPath, indexPath, onDidFinishLoad }) {
   const window = new BrowserWindow({
@@ -9,6 +10,7 @@ export function createMainWindow({ preloadPath, indexPath, onDidFinishLoad }) {
     show: false,
     backgroundColor: "#f3f6f4",
     title: "Bulk WA Sender",
+    icon: path.join(app.getAppPath(), "assets", "bulk-wa.png"),
     autoHideMenuBar: true,
     webPreferences: {
       preload: preloadPath,
