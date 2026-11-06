@@ -2390,128 +2390,187 @@ export function App() {
         ) : activeDataset ? (
           <section className="flex min-h-0 flex-1 flex-col p-7">
             <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <div className="grid-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white/90 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="primary" disabled={sending} onClick={() => void startBulkSend()}><Send />Kirim Massal</Button>
-                  {sending && <Button variant="destructive" onClick={() => { stopRequested.current = true; }}><X />Hentikan</Button>}
-                  {sending && (
-                    <div className="flex min-w-40 items-center gap-2 text-xs text-slate-500">
-                      <Progress className="flex-1" value={progress.total ? Math.round((progress.done / progress.total) * 100) : 0} />
-                      {progress.done} / {progress.total}
+              <div className="grid-toolbar border-b border-slate-200 bg-white">
+                <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-700">
+                        <Table2 className="size-4" />
+                      </span>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">Ringkasan tabel</p>
+                        <p className="text-xs text-slate-500">{rows.length.toLocaleString("id-ID")} baris pesan</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant="muted" className="font-medium">{stats.pending.toLocaleString("id-ID")} pending</Badge>
+                      <Badge variant="success" className="font-medium">{stats.sent.toLocaleString("id-ID")} terkirim</Badge>
+                      <Badge variant="destructive" className="font-medium">{stats.failed.toLocaleString("id-ID")} gagal</Badge>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {sending ? (
+                      <>
+                        <div className="flex min-w-36 items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                          <Progress className="flex-1" value={progress.total ? Math.round((progress.done / progress.total) * 100) : 0} />
+                          <span className="tabular-nums">{progress.done} / {progress.total}</span>
+                        </div>
+                        <Button variant="destructive" onClick={() => { stopRequested.current = true; }}>
+                          <X />Hentikan
+                        </Button>
+                      </>
+                    ) : (
+                      <Button variant="primary" disabled={!rows.length} onClick={() => void startBulkSend()}>
+                        <Send />Kirim Massal
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-x-6 gap-y-4 border-t border-slate-100 bg-slate-50/70 px-5 py-3">
+                  <div role="group" aria-label="Kelola data tabel" className="flex flex-col gap-1.5">
+                    <span className="px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Data</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" disabled={sending} onClick={() => addRows()}>
+                        <Plus />Tambah Baris
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={sending || !rows.length}
+                        onClick={openCustomDataEditor}
+                        title="Tambahkan kolom personalisasi dengan nilai berbeda pada tiap baris"
+                      >
+                        <Plus />Data Tambahan
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={sending || !rows.length}
+                        onClick={() => void deleteRows(selection?.r1 ?? active?.row ?? 0, startSelection)}
+                      >
+                        <Trash2 />Hapus Baris
+                      </Button>
+                    </div>
+                  </div>
+
+                  {checkedRows.length > 0 && (
+                    <div role="group" aria-label="Aksi baris terpilih" className="flex flex-col gap-1.5">
+                      <span className="px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                        {checkedRows.length} baris dipilih
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="flex h-8 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs text-slate-700">
+                          <Checkbox
+                            aria-label="Aktifkan simpan balasan untuk baris yang dipilih"
+                            checked={
+                              checkedResponseEnabledCount === checkedRows.length
+                                ? true
+                                : checkedResponseEnabledCount > 0
+                                  ? "indeterminate"
+                                  : false
+                            }
+                            disabled={sending}
+                            onCheckedChange={(checked) =>
+                              setResponseCaptureForRows(
+                                new Set(checkedRows.map((row) => row.id)),
+                                checked === true,
+                              )
+                            }
+                          />
+                          Simpan balasan
+                        </label>
+                        <Button variant="outline" size="sm" disabled={sending} onClick={() => void deleteCheckedRows()}>
+                          <Trash2 />Hapus
+                        </Button>
+                        <Button variant="primary" size="sm" disabled={sending} onClick={() => void sendCheckedRows()}>
+                          <Send />Kirim
+                        </Button>
+                      </div>
                     </div>
                   )}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" disabled={sending} onClick={() => addRows()}><Plus />Baris</Button>
-                  <Button
-                    variant="outline"
-                    disabled={sending || !rows.length}
-                    onClick={openCustomDataEditor}
-                    title="Tambahkan kolom personalisasi dengan nilai berbeda pada tiap baris"
-                  >
-                    <Plus />Data Tambahan
-                  </Button>
-                  <Button variant="outline" disabled={sending || !rows.length} onClick={() => void deleteRows(selection?.r1 ?? active?.row ?? 0, startSelection)}><Trash2 />Hapus Baris</Button>
-                  {checkedRows.length > 0 && (
-                    <>
-                      <label className="flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700">
+
+                  <div role="group" aria-label="Simpan balasan" className="flex flex-col gap-1.5">
+                    <span className="px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Simpan balasan</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex h-8 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-xs text-slate-700">
                         <Checkbox
-                          aria-label="Aktifkan simpan balasan untuk baris yang dipilih"
+                          aria-label="Aktifkan simpan balasan untuk semua baris"
                           checked={
-                            checkedResponseEnabledCount === checkedRows.length
+                            responseEnabledCount === rows.length && rows.length > 0
                               ? true
-                              : checkedResponseEnabledCount > 0
+                              : responseEnabledCount > 0
                                 ? "indeterminate"
                                 : false
                           }
-                          disabled={sending}
-                          onCheckedChange={(checked) =>
-                            setResponseCaptureForRows(
-                              new Set(checkedRows.map((row) => row.id)),
-                              checked === true,
-                            )
-                          }
+                          disabled={sending || !rows.length}
+                          onCheckedChange={(checked) => setResponseCaptureForRows(null, checked === true)}
                         />
-                        Simpan balasan dipilih
+                        Semua baris
                       </label>
                       <Button
                         variant="outline"
+                        size="sm"
                         disabled={sending}
-                        onClick={() => void deleteCheckedRows()}
+                        title="Atur format teks dan berkas balasan yang disimpan"
+                        onClick={openResponseSettings}
                       >
-                        <Trash2 />Hapus Dipilih ({checkedRows.length})
+                        <Settings2 />Pengaturan
                       </Button>
                       <Button
-                        variant="primary"
+                        variant="outline"
+                        size="sm"
                         disabled={sending}
-                        onClick={() => void sendCheckedRows()}
+                        title="Buka folder yang berisi file pesan balasan tersimpan"
+                        onClick={() => void openResponseFolder()}
                       >
-                        <Send />Kirim Dipilih ({checkedRows.length})
+                        <MessageSquareText />Buka Arsip
                       </Button>
-                    </>
-                  )}
-                  <label className="flex items-center gap-2 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-700">
-                    <Checkbox
-                      aria-label="Aktifkan simpan balasan untuk semua baris"
-                      checked={
-                        responseEnabledCount === rows.length && rows.length > 0
-                          ? true
-                          : responseEnabledCount > 0
-                            ? "indeterminate"
-                            : false
-                      }
-                      disabled={sending || !rows.length}
-                      onCheckedChange={(checked) => setResponseCaptureForRows(null, checked === true)}
-                    />
-                    Simpan balasan semua
-                  </label>
-                  <Button
-                    variant="outline"
-                    disabled={sending}
-                    title="Atur format teks dan berkas balasan yang disimpan"
-                    onClick={openResponseSettings}
-                  >
-                    <Settings2 />Filter Balasan
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={sending}
-                    title="Buka folder yang berisi file pesan balasan tersimpan"
-                    onClick={() => void openResponseFolder()}
-                  >
-                    <MessageSquareText />Buka folder balasan
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={sending}
-                    title={sharedAttachments.map((attachment) => attachment.name).join("\n") || "Lampirkan berkas untuk semua pesan"}
-                    onClick={() => void chooseAttachments()}
-                  >
-                    <Paperclip />Lampiran Bersama{sharedAttachments.length ? ` (${sharedAttachments.length})` : ""}
-                  </Button>
-                  {sharedAttachments.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      disabled={sending}
-                      aria-label="Hapus semua lampiran bersama"
-                      title="Hapus semua lampiran bersama"
-                      onClick={() => {
-                        if (!activeDatasetId) return;
-                        setDatasets((current) =>
-                          current.map((dataset) =>
-                            dataset.id === activeDatasetId
-                              ? { ...dataset, sharedAttachments: [] }
-                              : dataset,
-                          ),
-                        );
-                      }}
-                    >
-                      <X />
-                    </Button>
-                  )}
-                  <Button variant="outline" disabled={sending} onClick={() => void importExcel()}><FileUp />Import Excel</Button>
-                  <Button variant="outline" disabled={sending} onClick={() => void exportExcel()}><FileDown />Export Excel</Button>
+                    </div>
+                  </div>
+
+                  <div role="group" aria-label="Lampiran dan Excel" className="flex flex-col gap-1.5">
+                    <span className="px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Lampiran & Excel</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={sending}
+                        title={sharedAttachments.map((attachment) => attachment.name).join("\n") || "Lampirkan berkas untuk semua pesan"}
+                        onClick={() => void chooseAttachments()}
+                      >
+                        <Paperclip />Berkas Bersama{sharedAttachments.length ? ` (${sharedAttachments.length})` : ""}
+                      </Button>
+                      {sharedAttachments.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-8"
+                          disabled={sending}
+                          aria-label="Hapus semua lampiran bersama"
+                          title="Hapus semua lampiran bersama"
+                          onClick={() => {
+                            if (!activeDatasetId) return;
+                            setDatasets((current) =>
+                              current.map((dataset) =>
+                                dataset.id === activeDatasetId
+                                  ? { ...dataset, sharedAttachments: [] }
+                                  : dataset,
+                              ),
+                            );
+                          }}
+                        >
+                          <X />
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" disabled={sending} onClick={() => void importExcel()}>
+                        <FileUp />Import
+                      </Button>
+                      <Button variant="outline" size="sm" disabled={sending} onClick={() => void exportExcel()}>
+                        <FileDown />Export
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 bg-[#f7faf8] px-4 py-3 text-xs text-slate-500">
