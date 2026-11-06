@@ -34,6 +34,7 @@ export class RowsStore {
       id: String(dataset?.id ?? randomUUID()),
       name: String(dataset?.name ?? "Data Excel"),
       sheet: String(dataset?.sheet ?? ""),
+      source: dataset?.source === "manual" ? "manual" : "excel",
       rows: Array.isArray(dataset?.rows)
         ? dataset.rows.slice(0, MAX_IMPORT_ROWS).map(sanitizeRow)
         : [],
@@ -92,6 +93,7 @@ export class RowsStore {
             id: String(dataset?.id ?? randomUUID()),
             name: String(dataset?.name ?? "Data Excel"),
             sheet: String(dataset?.sheet ?? ""),
+            source: dataset?.source === "manual" ? "manual" : "excel",
             rows: Array.isArray(dataset?.rows)
               ? dataset.rows.slice(0, MAX_IMPORT_ROWS).map(sanitizeRow)
               : [],

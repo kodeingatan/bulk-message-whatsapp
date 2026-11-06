@@ -18,6 +18,89 @@ export function excelStatus(status) {
   return "PENDING";
 }
 
+const PHONE_HEADERS = new Set([
+  "wa number",
+  "wa phone",
+  "wa nomor",
+  "nomor whatsapp",
+  "nomor wa",
+  "no whatsapp",
+  "no wa",
+  "phone",
+  "phone number",
+  "nomor",
+  "no hp",
+  "whatsapp",
+]);
+const RECIPIENT_HEADERS = new Set([
+  "wa from",
+  "penerima",
+  "nama penerima",
+  "recipient",
+  "recipient name",
+  "contact name",
+  "name",
+  "nama",
+]);
+const MESSAGE_HEADERS = new Set([
+  "wa message",
+  "wa pesan",
+  "message",
+  "pesan",
+  "text",
+  "keterangan",
+]);
+
+function findSourceHeader(headers, aliases) {
+  return headers.find((header) => aliases.has(header.trim().toLowerCase()));
+}
+
+function appendUniqueHeader(headers, requested) {
+  let name = requested;
+  let suffix = 2;
+  while (headers.includes(name)) {
+    name = `${requested} (${suffix})`;
+    suffix += 1;
+  }
+  headers.push(name);
+  return name;
+}
+
+export function buildExportRows(rows) {
+  const headers = [];
+  for (const row of rows) {
+    for (const header of Object.keys(row?.sourceData ?? {})) {
+      if (header.trim() && !headers.includes(header)) headers.push(header);
+    }
+  }
+
+  const phoneHeader = findSourceHeader(headers, PHONE_HEADERS) ?? appendUniqueHeader(headers, "WA Number");
+  const recipientHeader =
+    findSourceHeader(headers, new Set(["wa from"])) ??
+    findSourceHeader(headers, RECIPIENT_HEADERS) ??
+    appendUniqueHeader(headers, "Penerima");
+  const messageHeader =
+    findSourceHeader(headers, MESSAGE_HEADERS) ?? appendUniqueHeader(headers, "WA Message");
+  const statusHeader = appendUniqueHeader(headers, "WA Send Status");
+  const sentAtHeader = appendUniqueHeader(headers, "WA Sent At");
+  const errorHeader = appendUniqueHeader(headers, "WA Error");
+
+  return [
+    headers,
+    ...rows.map((row) => {
+      const sourceData = row?.sourceData ?? {};
+      const values = { ...sourceData };
+      values[phoneHeader] = row?.phone ?? "";
+      values[recipientHeader] = row?.recipient ?? "";
+      values[messageHeader] = row?.message ?? "";
+      values[statusHeader] = excelStatus(row?.status);
+      values[sentAtHeader] = row?.sentAt ?? "";
+      values[errorHeader] = row?.error ?? "";
+      return headers.map((header) => values[header] ?? "");
+    }),
+  ];
+}
+
 function cellToString(value) {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") {
@@ -65,6 +148,10 @@ export function mapExcelRow(source) {
     pickField(source, ["wa message", "wa pesan", "message", "pesan", "text", "keterangan"]),
   );
 
+  const recipient = cellToString(
+    pickField(source, ["wa from", "penerima", "nama penerima", "recipient", "recipient name", "contact name", "name", "nama"]),
+  );
+
   const status = normalizeStatus(
     pickField(source, ["wa send status", "send status", "wa status", "status", "status kirim"]),
   );
@@ -72,6 +159,7 @@ export function mapExcelRow(source) {
   return {
     id: randomUUID(),
     phone,
+    recipient,
     message,
     status,
     sentAt: cellToString(pickField(source, ["sent at", "terkirim pada", "tanggal kirim"])),
@@ -108,6 +196,7 @@ export function sanitizeRow(row) {
   return {
     id: typeof row?.id === "string" && row.id ? row.id : randomUUID(),
     phone: String(row?.phone ?? ""),
+    recipient: String(row?.recipient ?? ""),
     message: String(row?.message ?? ""),
     status: status === "sending" ? "pending" : status,
     sentAt: String(row?.sentAt ?? ""),

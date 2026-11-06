@@ -4,7 +4,7 @@ import { dialog } from "electron";
 import XLSX from "xlsx";
 import { MAX_IMPORT_ROWS } from "../../shared/constants.js";
 import { validateSheetName } from "../../shared/excel.js";
-import { excelStatus, mapExcelRow, mergeWorksheetData } from "../utils/rows.js";
+import { buildExportRows, mapExcelRow, mergeWorksheetData } from "../utils/rows.js";
 
 const pendingImports = new Map();
 const IMPORT_EXPIRY_MS = 5 * 60 * 1000;
@@ -114,17 +114,11 @@ export async function exportExcel(mainWindow, rows, requestedSheetName = "WHATSA
   if (result.canceled || !result.filePath) return { canceled: true };
 
   try {
-    const header = ["WA Number", "WA Message", "WA Send Status", "Sent At", "Error"];
-    const body = rows.map((row) => [
-      row.phone || "",
-      row.message || "",
-      excelStatus(row.status),
-      row.sentAt || "",
-      row.error || "",
-    ]);
-
-    const sheet = XLSX.utils.aoa_to_sheet([header, ...body]);
-    sheet["!cols"] = [{ wch: 20 }, { wch: 70 }, { wch: 16 }, { wch: 24 }, { wch: 36 }];
+    const exportData = buildExportRows(rows);
+    const sheet = XLSX.utils.aoa_to_sheet(exportData);
+    sheet["!cols"] = exportData[0].map((header) => ({
+      wch: Math.min(60, Math.max(14, String(header).length + 4)),
+    }));
 
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, sheet, sheetName);

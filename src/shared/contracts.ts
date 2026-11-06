@@ -11,6 +11,7 @@ export type WAConnection =
 export interface ContactRow {
   id: string;
   phone: string;
+  recipient: string;
   message: string;
   status: RowStatus;
   sentAt: string;
@@ -22,6 +23,7 @@ export interface MessageDataset {
   id: string;
   name: string;
   sheet: string;
+  source?: "excel" | "manual";
   rows: ContactRow[];
 }
 

@@ -8,18 +8,26 @@ import {
   type KeyboardEvent,
 } from "react";
 import {
+  Bold,
+  Code2,
   Check,
   FileDown,
   FileSpreadsheet,
   FileUp,
+  Italic,
+  List,
   MessageCircle,
   Plus,
   Pencil,
+  Quote,
+  Redo2,
   RefreshCw,
   Send,
+  Strikethrough,
   Table2,
   Trash2,
   Unlink,
+  Undo2,
   Wifi,
   X,
 } from "lucide-react";
@@ -77,6 +85,7 @@ type ResizeDrag =
   | { kind: "row"; rowId: string; start: number; size: number };
 type Dialog = {
   kind: "confirm" | "input" | "sheet";
+  inputMode?: "sheet" | "dataset";
   title: string;
   message: string;
   confirmText: string;
@@ -96,10 +105,19 @@ type MessageDataMenu = {
   selectionStart?: number;
   selectionEnd?: number;
 };
+type MessageEditorHistory = {
+  rowId: string;
+  past: string[];
+  future: string[];
+  lastValue: string;
+  lastAt: number;
+};
+type MessageEditorView = "edit" | "whatsapp-preview" | "data-preview";
 
 const MAX_ROWS = 10_000;
-const columns = ["WA Number", "WA Message", "Status", "Terkirim Pada", "Keterangan"];
-const initialColumnWidths = [48, 250, 380, 132, 164, 240, 136];
+const columns = ["WA Number", "Penerima", "WA Message", "Status", "Terkirim Pada", "Keterangan"];
+const initialColumnWidths = [48, 180, 220, 380, 132, 164, 240, 136];
+const gridColumnToTableColumn = [2, 3, 4, 5, 6, 7];
 const connectionLabels: Record<WhatsAppState["connection"], string> = {
   idle: "Tidak terhubung",
   connecting: "Menghubungkan...",
@@ -120,8 +138,34 @@ function uid() {
   return globalThis.crypto?.randomUUID?.() ?? `row-${Date.now()}-${Math.random()}`;
 }
 
+function validateDatasetName(value: string) {
+  const name = value.trim();
+  if (!name) return "Nama tabel tidak boleh kosong.";
+  if (name.length > 60) return "Nama tabel maksimal 60 karakter.";
+  if (/[\u0000-\u001f]/.test(name)) return "Nama tabel mengandung karakter yang tidak valid.";
+  return "";
+}
+
 function newRow(): ContactRow {
-  return { id: uid(), phone: "", message: "", status: "pending", sentAt: "", error: "" };
+  return { id: uid(), phone: "", recipient: "", message: "", status: "pending", sentAt: "", error: "" };
+}
+
+function getImportedRecipient(sourceData?: Record<string, string>) {
+  const recipientHeaders = new Set([
+    "wa from",
+    "penerima",
+    "nama penerima",
+    "recipient",
+    "recipient name",
+    "contact name",
+    "name",
+    "nama",
+  ]);
+  const entries = Object.entries(sourceData ?? []);
+  const getHeader = (header: string) => header.split(" · ").at(-1)?.trim().toLowerCase() ?? "";
+  const waFrom = entries.find(([header]) => getHeader(header) === "wa from");
+  if (waFrom) return waFrom[1];
+  return entries.find(([header]) => recipientHeaders.has(getHeader(header)))?.[1] ?? "";
 }
 
 function normalizeRow(row: Partial<ContactRow>): ContactRow {
@@ -129,6 +173,7 @@ function normalizeRow(row: Partial<ContactRow>): ContactRow {
   return {
     id: typeof row.id === "string" && row.id ? row.id : uid(),
     phone: String(row.phone ?? ""),
+    recipient: String(row.recipient ?? getImportedRecipient(row.sourceData)),
     message: String(row.message ?? ""),
     status: validStatus.includes(row.status as RowStatus) ? (row.status as RowStatus) : "pending",
     sentAt: String(row.sentAt ?? ""),
@@ -147,6 +192,33 @@ function resolveMessageTemplate(message: string, sourceData?: Record<string, str
     const key = rawKey.trim();
     const value = sourceData?.[key];
     return value === undefined ? placeholder : value;
+  });
+}
+
+function renderWhatsAppPreview(message: string) {
+  const inlinePattern = /(```[\s\S]+?```|\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~)/g;
+  return message.split("\n").map((line, lineIndex) => {
+    const quote = line.startsWith("> ");
+    const bullet = line.startsWith("- ") || line.startsWith("* ");
+    const content = quote || bullet ? line.slice(2) : line;
+    const parts = content.split(inlinePattern).filter(Boolean).map((part, partIndex) => {
+      const key = `${lineIndex}-${partIndex}`;
+      if (part.startsWith("```") && part.endsWith("```")) {
+        return <code key={key} className="rounded bg-slate-100 px-1 font-mono">{part.slice(3, -3)}</code>;
+      }
+      if (part.startsWith("*") && part.endsWith("*")) return <strong key={key}>{part.slice(1, -1)}</strong>;
+      if (part.startsWith("_") && part.endsWith("_")) return <em key={key}>{part.slice(1, -1)}</em>;
+      if (part.startsWith("~") && part.endsWith("~")) return <del key={key}>{part.slice(1, -1)}</del>;
+      return <span key={key}>{part}</span>;
+    });
+
+    return (
+      <div key={lineIndex} className={quote ? "border-l-2 border-emerald-500 pl-3 text-slate-500" : ""}>
+        {bullet && <span className="mr-2 text-emerald-700">•</span>}
+        {parts.length ? parts : <br />}
+      </div>
+    );
+
   });
 }
 
@@ -178,6 +250,10 @@ function validateSheetName(value: string) {
     return "Nama sheet tidak boleh diawali atau diakhiri tanda petik satu.";
   }
   return "";
+}
+
+function validateDialogInput(value: string, mode: Dialog["inputMode"]) {
+  return mode === "dataset" ? validateDatasetName(value) : validateSheetName(value);
 }
 
 function connectionCopy(connection: WhatsAppState["connection"]) {
@@ -262,6 +338,9 @@ export function App() {
     rowNumber: number;
     value: string;
   } | null>(null);
+  const [messageHistoryStatus, setMessageHistoryStatus] = useState({ canUndo: false, canRedo: false });
+  const [messageEditorView, setMessageEditorView] = useState<MessageEditorView>("edit");
+  const [messageDataSearch, setMessageDataSearch] = useState("");
   const [active, setActive] = useState<Cell | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [anchor, setAnchor] = useState<Cell | null>(null);
@@ -279,6 +358,8 @@ export function App() {
   const waRef = useRef(wa);
   const dialogResolver = useRef<((value: boolean | string | null) => void) | null>(null);
   const messageTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageEditorDialogRef = useRef<HTMLDivElement | null>(null);
+  const messageHistoryRef = useRef<MessageEditorHistory | null>(null);
   const cellRefs = useRef(new Map<string, HTMLElement>());
   const activeRef = useRef<Cell | null>(active);
   const anchorRef = useRef<Cell | null>(anchor);
@@ -385,9 +466,9 @@ export function App() {
   const disconnectDataset = useCallback(async (dataset: MessageDataset) => {
     setDatasetContextMenu(null);
     const confirmed = await confirm({
-      title: "Putuskan koneksi ke Excel?",
-      message: `Apakah kamu yakin ingin menghapus "${dataset.name}" dari daftar? Data yang diimport akan dihapus dari aplikasi.`,
-      confirmText: "Putuskan",
+      title: dataset.source === "manual" ? "Hapus tabel pesan?" : "Putuskan koneksi ke Excel?",
+      message: `Apakah kamu yakin ingin menghapus "${dataset.name}" dari daftar? Data tabel akan dihapus dari aplikasi.`,
+      confirmText: dataset.source === "manual" ? "Hapus Tabel" : "Putuskan",
       danger: true,
     });
     if (!confirmed) return;
@@ -425,9 +506,10 @@ export function App() {
       .loadDatasets()
       .then((result) => {
         if (!mounted) return;
-        const loadedDatasets = Array.isArray(result?.datasets)
+        const loadedDatasets: MessageDataset[] = Array.isArray(result?.datasets)
           ? result.datasets.map((dataset) => ({
               ...dataset,
+              source: dataset.source === "manual" ? "manual" : "excel",
               rows: Array.isArray(dataset.rows) ? dataset.rows.map(normalizeRow) : [],
             }))
           : [];
@@ -591,18 +673,24 @@ export function App() {
       const header = document.querySelectorAll<HTMLTableCellElement>("thead th")[columnIndex];
       const headerStyle = header ? getComputedStyle(header) : getComputedStyle(document.body);
       context.font = headerStyle.font;
-      const heading = columnIndex === 0 ? "#" : columns[columnIndex - 1] ?? "Aksi";
+      const heading =
+        columnIndex === 0
+          ? "#"
+          : columnIndex === 1
+            ? "Aksi"
+            : columns[columnIndex - 2] ?? "Aksi";
       let widest = context.measureText(heading).width;
-      if (columnIndex === 1) widest += 24;
+      if (columnIndex === 2) widest += 24;
 
       const fieldByColumn: (keyof ContactRow | null)[] = [
         null,
+        null,
         "phone",
+        "recipient",
         "message",
         "status",
         "sentAt",
         "error",
-        null,
       ];
       const field = fieldByColumn[columnIndex];
       if (field) {
@@ -618,9 +706,8 @@ export function App() {
           for (const line of value.split(/\r?\n/)) {
             widest = Math.max(widest, context.measureText(line).width);
           }
-          if (columnIndex === 0) widest = Math.max(widest, context.measureText(String(index + 1)).width);
         }
-      } else if (columnIndex === 6) {
+      } else if (columnIndex === 1) {
         widest = Math.max(widest, 120);
       } else {
         for (let index = 0; index < rows.length; index += 1) {
@@ -628,7 +715,7 @@ export function App() {
         }
       }
 
-      const extraWidth = columnIndex === 1 ? 64 : columnIndex === 6 ? 16 : 32;
+      const extraWidth = columnIndex === 1 ? 16 : columnIndex === 2 ? 64 : 32;
       const minimum = columnIndex === 0 ? 48 : 80;
       const fittedWidth = Math.min(1200, Math.max(minimum, Math.ceil(widest + extraWidth)));
       setColumnWidths((current) =>
@@ -650,7 +737,7 @@ export function App() {
       const style = preview ? getComputedStyle(preview) : getComputedStyle(document.body);
       context.font = style.font;
       const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.4 || 20;
-      const messageWidth = Math.max(1, (widths[2] ?? initialColumnWidths[2]) - 64);
+      const messageWidth = Math.max(1, (widths[3] ?? initialColumnWidths[3]) - 64);
       const messageLines = wrappedLineCount(context, row.message, messageWidth);
       return Math.min(600, Math.max(44, Math.ceil(messageLines * lineHeight + 12)));
     },
@@ -659,9 +746,13 @@ export function App() {
 
   const autoFitColumnSelection = useCallback((columnIndex: number) => {
     const range = selectionModeRef.current === "column" ? selectionRef.current : null;
-    const first = range ? range.c1 + 1 : columnIndex;
-    const last = range ? range.c2 + 1 : columnIndex;
-    for (let column = first; column <= last; column += 1) autoFitColumn(column);
+    if (!range) {
+      autoFitColumn(columnIndex);
+      return;
+    }
+    for (let column = range.c1; column <= range.c2; column += 1) {
+      autoFitColumn(gridColumnToTableColumn[column]);
+    }
   }, [autoFitColumn]);
 
   const autoFitRowSelection = useCallback((rowId: string) => {
@@ -810,7 +901,7 @@ export function App() {
     setSelection(nextSelection);
   }, []);
 
-  const changeCell = useCallback((rowIndex: number, key: "phone" | "message", value: string) => {
+  const changeCell = useCallback((rowIndex: number, key: "phone" | "recipient" | "message", value: string) => {
     updateRows((current) =>
       current.map((row, index) =>
         index !== rowIndex
@@ -827,6 +918,16 @@ export function App() {
   const openMessageEditor = useCallback((row: ContactRow, rowIndex: number) => {
     if (sending) return;
     setMessageDataMenu(null);
+    setMessageEditorView("edit");
+    setMessageDataSearch("");
+    messageHistoryRef.current = {
+      rowId: row.id,
+      past: [],
+      future: [],
+      lastValue: row.message,
+      lastAt: 0,
+    };
+    setMessageHistoryStatus({ canUndo: false, canRedo: false });
     setMessageEditor({ rowId: row.id, rowNumber: rowIndex + 1, value: row.message });
   }, [sending]);
 
@@ -835,6 +936,7 @@ export function App() {
     const rowIndex = rows.findIndex((row) => row.id === messageEditor.rowId);
     if (rowIndex < 0) {
       setMessageEditor(null);
+      messageHistoryRef.current = null;
       toast("Baris pesan tidak ditemukan.", "error");
       return;
     }
@@ -843,7 +945,135 @@ export function App() {
     }
     setMessageDataMenu(null);
     setMessageEditor(null);
+    messageHistoryRef.current = null;
   }, [changeCell, messageEditor, rows, sending, toast]);
+
+  const updateEditorHistoryStatus = useCallback(() => {
+    const history = messageHistoryRef.current;
+    setMessageHistoryStatus({
+      canUndo: Boolean(history?.past.length),
+      canRedo: Boolean(history?.future.length),
+    });
+  }, []);
+
+  const changeMessageEditorValue = useCallback((value: string, inputType = "insertText") => {
+    if (!messageEditor) return;
+    let history = messageHistoryRef.current;
+    if (!history || history.rowId !== messageEditor.rowId) {
+      history = {
+        rowId: messageEditor.rowId,
+        past: [],
+        future: [],
+        lastValue: messageEditor.value,
+        lastAt: 0,
+      };
+    }
+
+    const now = Date.now();
+    const shouldCreateStep =
+      history.lastAt === 0 ||
+      now - history.lastAt > 700 ||
+      inputType.includes("Paste") ||
+      inputType.includes("LineBreak") ||
+      inputType.includes("Paragraph");
+    const past = shouldCreateStep
+      ? [...history.past, history.lastValue].slice(-100)
+      : history.past;
+    messageHistoryRef.current = {
+      ...history,
+      past,
+      future: [],
+      lastValue: value,
+      lastAt: now,
+    };
+    setMessageEditor({ ...messageEditor, value });
+    updateEditorHistoryStatus();
+  }, [messageEditor, updateEditorHistoryStatus]);
+
+  const undoMessageEditor = useCallback(() => {
+    if (!messageEditor) return;
+    const history = messageHistoryRef.current;
+    if (!history?.past.length) return;
+    const value = history.past[history.past.length - 1];
+    messageHistoryRef.current = {
+      ...history,
+      past: history.past.slice(0, -1),
+      future: [...history.future, messageEditor.value],
+      lastValue: value,
+      lastAt: 0,
+    };
+    setMessageEditor({ ...messageEditor, value });
+    updateEditorHistoryStatus();
+    requestAnimationFrame(() => messageTextareaRef.current?.focus());
+  }, [messageEditor, updateEditorHistoryStatus]);
+
+  const redoMessageEditor = useCallback(() => {
+    if (!messageEditor) return;
+    const history = messageHistoryRef.current;
+    if (!history?.future.length) return;
+    const value = history.future[history.future.length - 1];
+    messageHistoryRef.current = {
+      ...history,
+      past: [...history.past, messageEditor.value].slice(-100),
+      future: history.future.slice(0, -1),
+      lastValue: value,
+      lastAt: 0,
+    };
+    setMessageEditor({ ...messageEditor, value });
+    updateEditorHistoryStatus();
+    requestAnimationFrame(() => messageTextareaRef.current?.focus());
+  }, [messageEditor, updateEditorHistoryStatus]);
+
+  const formatMessageEditor = useCallback((format: "bold" | "italic" | "strike" | "code" | "quote" | "list") => {
+    if (!messageEditor) return;
+    const textarea = messageTextareaRef.current;
+    const start = textarea?.selectionStart ?? messageEditor.value.length;
+    const end = textarea?.selectionEnd ?? start;
+    const selected = messageEditor.value.slice(start, end);
+    let nextValue: string;
+    let selectionStart: number;
+    let selectionEnd: number;
+
+    if (format === "quote" || format === "list") {
+      const lineStart = messageEditor.value.lastIndexOf("\n", start - 1) + 1;
+      const lineEndIndex = messageEditor.value.indexOf("\n", end);
+      const lineEnd = lineEndIndex < 0 ? messageEditor.value.length : lineEndIndex;
+      const content = messageEditor.value.slice(lineStart, lineEnd);
+      const prefix = format === "quote" ? "> " : "- ";
+      const formatted = content
+        .split("\n")
+        .map((line) => (line.startsWith(prefix) ? line : `${prefix}${line}`))
+        .join("\n");
+      nextValue = `${messageEditor.value.slice(0, lineStart)}${formatted}${messageEditor.value.slice(lineEnd)}`;
+      selectionStart = lineStart;
+      selectionEnd = lineStart + formatted.length;
+    } else {
+      const marker = format === "bold" ? "*" : format === "italic" ? "_" : format === "strike" ? "~" : "```";
+      const token = format === "code" ? "```" : marker;
+      const wrapped = `${token}${selected}${token}`;
+      nextValue = `${messageEditor.value.slice(0, start)}${wrapped}${messageEditor.value.slice(end)}`;
+      selectionStart = selected ? start + token.length : start + token.length;
+      selectionEnd = selected ? selectionStart + selected.length : selectionStart;
+    }
+
+    const history = messageHistoryRef.current;
+    if (history?.rowId === messageEditor.rowId) {
+      messageHistoryRef.current = {
+        ...history,
+        past: [...history.past, messageEditor.value].slice(-100),
+        future: [],
+        lastValue: nextValue,
+        lastAt: 0,
+      };
+    }
+    setMessageEditor({ ...messageEditor, value: nextValue });
+    setMessageDataMenu(null);
+    updateEditorHistoryStatus();
+    requestAnimationFrame(() => {
+      messageTextareaRef.current?.focus();
+      messageTextareaRef.current?.setSelectionRange(selectionStart, selectionEnd);
+    });
+  }, [messageEditor, updateEditorHistoryStatus]);
 
   const insertMessageData = useCallback((key: string) => {
     if (!messageDataMenu) return;
@@ -859,6 +1089,17 @@ export function App() {
       const start = messageDataMenu.selectionStart ?? messageEditor.value.length;
       const end = messageDataMenu.selectionEnd ?? start;
       const value = `${messageEditor.value.slice(0, start)}${token}${messageEditor.value.slice(end)}`;
+      const history = messageHistoryRef.current;
+      if (history?.rowId === messageEditor.rowId) {
+        messageHistoryRef.current = {
+          ...history,
+          past: [...history.past, messageEditor.value].slice(-100),
+          future: [],
+          lastValue: value,
+          lastAt: 0,
+        };
+        updateEditorHistoryStatus();
+      }
       setMessageEditor({ ...messageEditor, value });
       requestAnimationFrame(() => {
         messageTextareaRef.current?.focus();
@@ -868,7 +1109,38 @@ export function App() {
       changeCell(rowIndex, "message", `${rows[rowIndex].message}${token}`);
     }
     setMessageDataMenu(null);
-  }, [changeCell, messageDataMenu, messageEditor, rows, toast]);
+    setMessageDataSearch("");
+  }, [changeCell, messageDataMenu, messageEditor, rows, toast, updateEditorHistoryStatus]);
+
+  const applyMessageTemplateToAll = useCallback(async (rowId: string) => {
+    setMessageDataMenu(null);
+    if (sending) return;
+    const sourceIndex = rows.findIndex((row) => row.id === rowId);
+    if (sourceIndex < 0) {
+      toast("Baris sumber pesan tidak ditemukan.", "error");
+      return;
+    }
+
+    const template = rows[sourceIndex].message;
+    const confirmed = await confirm({
+      title: "Ubah semua WA Message?",
+      message: `Template pesan dari baris ${sourceIndex + 1} akan diterapkan ke ${rows.length} baris. Token seperti {{Nama}} akan tetap menggunakan data masing-masing baris. Status pengiriman semua baris akan direset menjadi Pending.`,
+      confirmText: `Ubah ${rows.length} pesan`,
+      danger: true,
+    });
+    if (!confirmed) return;
+
+    updateRows((current) =>
+      current.map((row) => ({
+        ...row,
+        message: template,
+        status: "pending",
+        sentAt: "",
+        error: "",
+      })),
+    );
+    toast(`Template baris ${sourceIndex + 1} diterapkan ke ${rows.length} pesan.`, "success");
+  }, [confirm, rows, sending, toast, updateRows]);
 
   const addRows = useCallback(
     (count = 1) => {
@@ -1136,6 +1408,7 @@ export function App() {
       id: uid(),
       name: result.fileName || "Data Excel",
       sheet: result.sheet || "",
+      source: "excel",
       rows: imported.slice(0, MAX_ROWS),
     };
     setDatasets((current) => [...current, dataset]);
@@ -1151,6 +1424,33 @@ export function App() {
       toast("File berisi lebih dari 10.000 baris. Hanya 10.000 baris pertama yang diimport.", "info", 7000);
     }
   }, [askForSheet, sending, toast]);
+
+  const createMessageTable = useCallback(async () => {
+    if (sending) return;
+    const name = await askForInput({
+      title: "Buat tabel pesan",
+      message: "Masukkan nama untuk tabel pesan baru. Kamu dapat mengisi WA Number dan WA Message secara manual.",
+      value: "Tabel Pesan Baru",
+      confirmText: "Buat Tabel",
+      inputMode: "dataset",
+    });
+    if (name === null) return;
+    if (datasets.some((dataset) => dataset.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      toast("Nama tabel sudah digunakan. Gunakan nama yang berbeda.", "error");
+      return;
+    }
+
+    const dataset: MessageDataset = {
+      id: uid(),
+      name,
+      sheet: "",
+      source: "manual",
+      rows: [],
+    };
+    setDatasets((current) => [...current, dataset]);
+    openDataset(dataset.id);
+    toast(`Tabel "${name}" berhasil dibuat.`, "success");
+  }, [askForInput, datasets, openDataset, sending, toast]);
 
   const exportExcel = useCallback(async () => {
     if (sending) {
@@ -1225,7 +1525,7 @@ export function App() {
         const row = rows[rowIndex];
         const values: string[] = [];
         for (let colIndex = rect.c1; colIndex <= rect.c2; colIndex += 1) {
-          const key = ["phone", "message", "status", "sentAt", "error"][colIndex] as keyof ContactRow;
+          const key = ["phone", "recipient", "message", "status", "sentAt", "error"][colIndex] as keyof ContactRow;
           values.push(String(row?.[key] ?? ""));
         }
         lines.push(values.join("\t"));
@@ -1246,8 +1546,13 @@ export function App() {
         if (rowIndex < rect.r1 || rowIndex > rect.r2) return row;
         const next = { ...row };
         if (rect.c1 <= 0 && rect.c2 >= 0) next.phone = "";
-        if (rect.c1 <= 1 && rect.c2 >= 1) next.message = "";
-        if (next.phone !== row.phone || next.message !== row.message) {
+        if (rect.c1 <= 1 && rect.c2 >= 1) next.recipient = "";
+        if (rect.c1 <= 2 && rect.c2 >= 2) next.message = "";
+        if (
+          next.phone !== row.phone ||
+          next.recipient !== row.recipient ||
+          next.message !== row.message
+        ) {
           next.status = "pending";
           next.sentAt = "";
           next.error = "";
@@ -1272,8 +1577,8 @@ export function App() {
       if (cells.length === 1 && cells[0].length === 1) return;
       event.preventDefault();
       const start = activeRef.current;
-      if (start.col > 1) {
-        toast("Pilih sel WA Number atau WA Message terlebih dahulu.", "info");
+      if (start.col > 2) {
+        toast("Pilih sel WA Number, Penerima, atau WA Message terlebih dahulu.", "info");
         return;
       }
       const required = Math.min(MAX_ROWS, start.row + cells.length);
@@ -1287,7 +1592,8 @@ export function App() {
           values.forEach((value, columnOffset) => {
             const column = start.col + columnOffset;
             if (column === 0) row.phone = value;
-            if (column === 1) row.message = value;
+            if (column === 1) row.recipient = value;
+            if (column === 2) row.message = value;
           });
           row.status = "pending";
           row.sentAt = "";
@@ -1296,7 +1602,7 @@ export function App() {
         });
         return next;
       });
-      const end = { row: Math.min(MAX_ROWS - 1, start.row + cells.length - 1), col: Math.min(4, start.col + Math.max(...cells.map((line) => line.length)) - 1) };
+      const end = { row: Math.min(MAX_ROWS - 1, start.row + cells.length - 1), col: Math.min(columns.length - 1, start.col + Math.max(...cells.map((line) => line.length)) - 1) };
       setAnchor(start);
       setActive(start);
       setSelection(rectBetween(start, end));
@@ -1369,6 +1675,13 @@ export function App() {
     ? Object.entries(rows.find((row) => row.id === messageEditor.rowId)?.sourceData ?? {})
         .filter(([key]) => key.trim())
     : [];
+  const filteredEditorSourceFields = editorSourceFields.filter(([key, value]) => {
+    const query = messageDataSearch.trim().toLocaleLowerCase();
+    return !query || key.toLocaleLowerCase().includes(query) || value.toLocaleLowerCase().includes(query);
+  });
+  const editorSourceData = messageEditor
+    ? rows.find((row) => row.id === messageEditor.rowId)?.sourceData
+    : undefined;
   const connection = wa.connection;
   const account = formatNumber(wa.me);
 
@@ -1420,10 +1733,16 @@ export function App() {
                 });
               }}
             >
-              <FileSpreadsheet aria-hidden="true" className="size-4 shrink-0" />
+              {dataset.source === "manual" ? (
+                <Table2 aria-hidden="true" className="size-4 shrink-0" />
+              ) : (
+                <FileSpreadsheet aria-hidden="true" className="size-4 shrink-0" />
+              )}
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{dataset.name}</span>
-                {dataset.sheet && <span className="block truncate text-[10px] opacity-70">{dataset.sheet}</span>}
+                <span className="block truncate text-[10px] opacity-70">
+                  {dataset.source === "manual" ? "Tabel manual" : dataset.sheet || "Excel"}
+                </span>
               </span>
               <span className="shrink-0 text-[10px] opacity-70">{dataset.rows.length}</span>
             </Button>
@@ -1443,7 +1762,7 @@ export function App() {
             />
             <div
               role="menu"
-              aria-label="Opsi file Excel"
+              aria-label="Opsi tabel pesan"
               className="fixed z-50 min-w-56 rounded-md border border-slate-200 bg-white p-1 text-slate-800 shadow-lg"
               style={{
                 top: Math.min(datasetContextMenu.y, window.innerHeight - 56),
@@ -1462,7 +1781,9 @@ export function App() {
                 }}
               >
                 <Unlink aria-hidden="true" className="size-4" />
-                Putuskan koneksi ke Excel
+                {datasets.find((item) => item.id === datasetContextMenu.datasetId)?.source === "manual"
+                  ? "Hapus tabel pesan"
+                  : "Putuskan koneksi ke Excel"}
               </button>
             </div>
           </>
@@ -1483,21 +1804,29 @@ export function App() {
         <header className="app-topbar flex items-center justify-between border-b px-8 py-5">
           <div>
             <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.15em] text-emerald-700/70">
-              {page === "whatsapp" ? "OVERVIEW" : page === "datasets" ? "MESSAGE DATA" : "SPREADSHEET"}
+              {page === "whatsapp"
+                ? "OVERVIEW"
+                : page === "datasets"
+                  ? "MESSAGE DATA"
+                  : activeDataset?.source === "manual"
+                    ? "MESSAGE TABLE"
+                    : "SPREADSHEET"}
             </div>
             <h1 className="text-[21px] font-bold tracking-tight text-slate-800">
               {page === "whatsapp"
                 ? "WhatsApp"
                 : page === "datasets"
-                  ? "Data Excel"
+                  ? "Tabel Pesan"
                   : activeDataset?.name ?? "Tabel Pesan"}
             </h1>
             <p className="mt-1 text-[13px] text-slate-500">
               {page === "whatsapp"
                 ? "Hubungkan akun dan pantau hasil pengiriman pesan."
                 : page === "datasets"
-                  ? "Ringkasan file Excel yang telah diimport."
-                  : `Sheet: ${activeDataset?.sheet || "—"} • Edit data lalu kirim massal.`}
+                  ? "Buat tabel pesan manual atau buka tabel dari file Excel."
+                  : activeDataset?.source === "manual"
+                    ? "Tabel manual • Tambahkan baris lalu isi data pesan."
+                    : `Sheet: ${activeDataset?.sheet || "—"} • Edit data lalu kirim massal.`}
             </p>
           </div>
           <Badge className="gap-1.5 px-3 py-1.5" variant={connection === "open" ? "success" : connection === "qr" ? "warning" : "muted"}>
@@ -1583,21 +1912,26 @@ export function App() {
             <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/70 p-5">
                 <div>
-                  <CardTitle className="text-base">File Excel yang diimport</CardTitle>
+                  <CardTitle className="text-base">Daftar Tabel Pesan</CardTitle>
                   <CardDescription className="mt-1 text-xs">
-                    Pilih file untuk membuka tabel pesannya.
+                    Pilih tabel untuk membuka dan mengelola datanya.
                   </CardDescription>
                 </div>
-                <Button variant="primary" disabled={sending} onClick={() => void importExcel()}>
-                  <FileUp />Import Excel
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" disabled={sending} onClick={() => void createMessageTable()}>
+                    <Plus />Buat Tabel
+                  </Button>
+                  <Button variant="primary" disabled={sending} onClick={() => void importExcel()}>
+                    <FileUp />Import Excel
+                  </Button>
+                </div>
               </div>
               <div className="flat-scrollbar min-h-0 flex-1 overflow-auto">
                 {datasets.length ? (
                   <Table className="min-w-[700px]">
                     <TableHeader className="sticky top-0 z-10 bg-muted text-xs uppercase tracking-wide">
                       <TableRow>
-                        <TableHead>Nama Excel</TableHead>
+                        <TableHead>Nama Tabel</TableHead>
                         <TableHead className="w-36 text-right">Pending</TableHead>
                         <TableHead className="w-36 text-right">Terkirim</TableHead>
                         <TableHead className="w-36 text-right">Gagal</TableHead>
@@ -1619,12 +1953,16 @@ export function App() {
                                 className="flex min-w-0 items-center gap-3 text-left"
                                 onClick={() => openDataset(dataset.id)}
                               >
-                                <FileSpreadsheet className="size-5 shrink-0 text-emerald-700" />
+                                {dataset.source === "manual" ? (
+                                  <Table2 className="size-5 shrink-0 text-emerald-700" />
+                                ) : (
+                                  <FileSpreadsheet className="size-5 shrink-0 text-emerald-700" />
+                                )}
                                 <span className="min-w-0">
                                   <span className="block truncate font-medium text-slate-800">{dataset.name}</span>
-                                  {dataset.sheet && (
-                                    <span className="block truncate text-xs text-slate-500">Sheet: {dataset.sheet}</span>
-                                  )}
+                                  <span className="block truncate text-xs text-slate-500">
+                                    {dataset.source === "manual" ? "Dibuat manual" : `Sheet: ${dataset.sheet || "—"}`}
+                                  </span>
                                 </span>
                               </button>
                             </TableCell>
@@ -1640,12 +1978,17 @@ export function App() {
                 ) : (
                   <div className="grid h-full min-h-64 place-items-center p-8 text-center">
                     <div>
-                      <FileSpreadsheet className="mx-auto size-10 text-slate-300" />
-                      <p className="mt-3 font-medium text-slate-700">Belum ada file Excel</p>
-                      <p className="mt-1 text-sm text-slate-500">Import file untuk membuat daftar data pesan.</p>
-                      <Button className="mt-4" variant="outline" disabled={sending} onClick={() => void importExcel()}>
-                        <FileUp />Import Excel
-                      </Button>
+                      <Table2 className="mx-auto size-10 text-slate-300" />
+                      <p className="mt-3 font-medium text-slate-700">Belum ada tabel pesan</p>
+                      <p className="mt-1 text-sm text-slate-500">Buat tabel manual atau import file Excel.</p>
+                      <div className="mt-4 flex justify-center gap-2">
+                        <Button variant="primary" disabled={sending} onClick={() => void createMessageTable()}>
+                          <Plus />Buat Tabel
+                        </Button>
+                        <Button variant="outline" disabled={sending} onClick={() => void importExcel()}>
+                          <FileUp />Import Excel
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1733,6 +2076,13 @@ export function App() {
                           onDoubleClick={() => autoFitColumnSelection(0)}
                         />
                       </TableHead>
+                      <TableHead className="relative h-11 px-3">
+                        Aksi
+                        <ColumnResizeHandle
+                          onPointerDown={(event) => startColumnResize(1, event)}
+                          onDoubleClick={() => autoFitColumnSelection(1)}
+                        />
+                      </TableHead>
                       {columns.map((column, columnIndex) => (
                         <TableHead
                           key={column}
@@ -1760,18 +2110,11 @@ export function App() {
                             </span>
                           ) : column}
                           <ColumnResizeHandle
-                            onPointerDown={(event) => startColumnResize(columnIndex + 1, event)}
-                            onDoubleClick={() => autoFitColumnSelection(columnIndex + 1)}
+                            onPointerDown={(event) => startColumnResize(columnIndex + 2, event)}
+                            onDoubleClick={() => autoFitColumnSelection(columnIndex + 2)}
                           />
                         </TableHead>
                       ))}
-                      <TableHead className="relative h-11 px-3">
-                        Aksi
-                        <ColumnResizeHandle
-                          onPointerDown={(event) => startColumnResize(columnWidths.length - 1, event)}
-                          onDoubleClick={() => autoFitColumnSelection(columnWidths.length - 1)}
-                        />
-                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1790,6 +2133,13 @@ export function App() {
                             onPointerDown={(event) => startRowResize(row.id, event)}
                             onDoubleClick={() => autoFitRowSelection(row.id)}
                           />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap border-r border-slate-100 px-2 py-1">
+                          <div className="flex items-center gap-1">
+                            <RowAction title="Kirim baris ini" disabled={sending} onClick={() => void sendSingle(rowIndex)}><Send /></RowAction>
+                            <RowAction title="Tandai pending" disabled={sending} onClick={() => resetRow(rowIndex)}><RefreshCw /></RowAction>
+                            <RowAction title="Hapus baris" disabled={sending} danger onClick={() => void deleteRows(rowIndex)}><Trash2 /></RowAction>
+                          </div>
                         </TableCell>
                         <TableCell data-grid-cell={`${rowIndex}:0`} className={cellClass(selection, active, rowIndex, 0)}>
                           <div className="flex items-center gap-2">
@@ -1812,9 +2162,33 @@ export function App() {
                           />
                           </div>
                         </TableCell>
+                        <TableCell data-grid-cell={`${rowIndex}:1`} className={cellClass(selection, active, rowIndex, 1)}>
+                          <Input
+                            ref={(element) => {
+                              if (element) cellRefs.current.set(`${rowIndex}:1`, element);
+                              else cellRefs.current.delete(`${rowIndex}:1`);
+                            }}
+                            data-cell={`${rowIndex}:1`}
+                            className="cell-input border-0 shadow-none focus-visible:ring-0"
+                            aria-label={`Penerima baris ${rowIndex + 1}`}
+                            placeholder="Nama penerima"
+                            value={row.recipient}
+                            disabled={sending}
+                            onFocus={() => {
+                              if (activeRef.current?.row !== rowIndex || activeRef.current.col !== 1) {
+                                setCellSelection({ row: rowIndex, col: 1 });
+                              }
+                            }}
+                            onMouseDown={(event) => {
+                              if (event.shiftKey) setCellSelection({ row: rowIndex, col: 1 }, true);
+                            }}
+                            onChange={(event) => changeCell(rowIndex, "recipient", event.target.value)}
+                          />
+                        </TableCell>
                         <TableCell
-                          data-grid-cell={`${rowIndex}:1`}
-                          className={cellClass(selection, active, rowIndex, 1)}
+                          data-grid-cell={`${rowIndex}:2`}
+                          className={cellClass(selection, active, rowIndex, 2)}
+                          title={resolveMessageTemplate(row.message, row.sourceData)}
                           onContextMenu={(event) => {
                             event.preventDefault();
                             if (sending) return;
@@ -1829,17 +2203,16 @@ export function App() {
                           <div className="flex min-w-0 items-center gap-2">
                             <button
                               ref={(element) => {
-                                if (element) cellRefs.current.set(`${rowIndex}:1`, element);
-                                else cellRefs.current.delete(`${rowIndex}:1`);
+                                if (element) cellRefs.current.set(`${rowIndex}:2`, element);
+                                else cellRefs.current.delete(`${rowIndex}:2`);
                               }}
                               type="button"
                               className="min-w-0 flex-1 text-left"
                               aria-label={`Lihat dan edit pesan baris ${rowIndex + 1}`}
-                              title="Klik untuk memilih, klik dua kali untuk mengedit pesan lengkap"
                               disabled={sending}
                               onFocus={() => {
-                                if (activeRef.current?.row !== rowIndex || activeRef.current.col !== 1) {
-                                  setCellSelection({ row: rowIndex, col: 1 });
+                                if (activeRef.current?.row !== rowIndex || activeRef.current.col !== 2) {
+                                  setCellSelection({ row: rowIndex, col: 2 });
                                 }
                               }}
                               onDoubleClick={() => openMessageEditor(row, rowIndex)}
@@ -1870,20 +2243,13 @@ export function App() {
                             </Button>
                           </div>
                         </TableCell>
-                        <TableCell data-grid-cell={`${rowIndex}:2`} className={cellClass(selection, active, rowIndex, 2)} onClick={() => setCellSelection({ row: rowIndex, col: 2 })}><Badge variant={statusStyle(row.status)}>{statusLabels[row.status]}</Badge></TableCell>
-                        <TableCell data-grid-cell={`${rowIndex}:3`} className={cellClass(selection, active, rowIndex, 3)} title={row.sentAt} onClick={() => setCellSelection({ row: rowIndex, col: 3 })}>{formatTime(row.sentAt)}</TableCell>
-                        <TableCell data-grid-cell={`${rowIndex}:4`} className={cellClass(selection, active, rowIndex, 4)} title={row.error} onClick={() => setCellSelection({ row: rowIndex, col: 4 })}><span className="block truncate">{row.error}</span></TableCell>
-                        <TableCell className="whitespace-nowrap px-2 py-1">
-                          <div className="flex items-center gap-1">
-                            <RowAction title="Kirim baris ini" disabled={sending} onClick={() => void sendSingle(rowIndex)}><Send /></RowAction>
-                            <RowAction title="Tandai pending" disabled={sending} onClick={() => resetRow(rowIndex)}><RefreshCw /></RowAction>
-                            <RowAction title="Hapus baris" disabled={sending} danger onClick={() => void deleteRows(rowIndex)}><Trash2 /></RowAction>
-                          </div>
-                        </TableCell>
+                        <TableCell data-grid-cell={`${rowIndex}:3`} className={cellClass(selection, active, rowIndex, 3)} onClick={() => setCellSelection({ row: rowIndex, col: 3 })}><Badge variant={statusStyle(row.status)}>{statusLabels[row.status]}</Badge></TableCell>
+                        <TableCell data-grid-cell={`${rowIndex}:4`} className={cellClass(selection, active, rowIndex, 4)} title={row.sentAt} onClick={() => setCellSelection({ row: rowIndex, col: 4 })}>{formatTime(row.sentAt)}</TableCell>
+                        <TableCell data-grid-cell={`${rowIndex}:5`} className={cellClass(selection, active, rowIndex, 5)} title={row.error} onClick={() => setCellSelection({ row: rowIndex, col: 5 })}><span className="block truncate">{row.error}</span></TableCell>
                       </TableRow>
                     ))}
                     {!rows.length && (
-                      <TableRow className="hover:bg-transparent"><TableCell colSpan={7} className="px-6 py-16 text-center">
+                      <TableRow className="hover:bg-transparent"><TableCell colSpan={8} className="px-6 py-16 text-center">
                         <p className="font-medium text-slate-700">Belum ada data</p>
                         <p className="mt-1 text-sm text-slate-500">Tambahkan baris baru atau import file Excel.</p>
                         <div className="mt-4 flex justify-center gap-2"><Button variant="primary" onClick={() => addRows()}><Plus />Tambah Baris</Button><Button variant="outline" onClick={() => void importExcel()}><FileUp />Import Excel</Button></div>
@@ -1926,14 +2292,14 @@ export function App() {
               <div>
                 <Input
                   autoFocus
-                  maxLength={31}
+                  maxLength={dialog.inputMode === "dataset" ? 60 : 31}
                   className="mt-1"
-                  aria-label="Nama tab Excel"
+                  aria-label={dialog.inputMode === "dataset" ? "Nama tabel pesan" : "Nama tab Excel"}
                   value={dialog.value || ""}
                   onChange={(event) => setDialog({ ...dialog, value: event.target.value, error: undefined })}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
-                      const error = validateSheetName(dialog.value || "");
+                      const error = validateDialogInput(dialog.value || "", dialog.inputMode);
                       if (error) setDialog({ ...dialog, error });
                       else settleDialog((dialog.value || "").trim());
                     }
@@ -1964,7 +2330,7 @@ export function App() {
                 variant={dialog.danger ? "destructive" : "primary"}
                 onClick={() => {
                   if (dialog.kind === "input") {
-                    const error = validateSheetName(dialog.value || "");
+                    const error = validateDialogInput(dialog.value || "", dialog.inputMode);
                     if (error) setDialog({ ...dialog, error });
                     else settleDialog((dialog.value || "").trim());
                   } else if (dialog.kind === "sheet") {
@@ -1988,25 +2354,155 @@ export function App() {
         }}
       >
         {messageEditor && (
-          <DialogContent className="max-w-4xl gap-5">
+          <DialogContent
+            ref={messageEditorDialogRef}
+            className="flex h-[min(82vh,760px)] max-h-[92vh] max-w-4xl flex-col gap-3 overflow-visible"
+          >
             <DialogHeader>
               <DialogTitle>Edit WA Message — Baris {messageEditor.rowNumber}</DialogTitle>
               <DialogDescription>
                 Edit pesan lengkap di sini. Baris baru dan format pesan akan dipertahankan.
               </DialogDescription>
             </DialogHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 p-1.5">
+              <div className="flex items-center gap-1">
+                {([
+                  ["edit", "Tulis"],
+                  ["whatsapp-preview", "Preview WA"],
+                  ["data-preview", "Preview data"],
+                ] as const).map(([view, label]) => (
+                  <Button
+                    key={view}
+                    type="button"
+                    size="sm"
+                    variant={messageEditorView === view ? "secondary" : "ghost"}
+                    className={messageEditorView === view ? "bg-white shadow-sm" : ""}
+                    onClick={() => {
+                      setMessageEditorView(view);
+                      setMessageDataMenu(null);
+                      setMessageDataSearch("");
+                      if (view === "edit") {
+                        requestAnimationFrame(() => messageTextareaRef.current?.focus());
+                      }
+                    }}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+              {messageEditorView === "edit" && (
+                <div className="flex flex-wrap items-center gap-0.5">
+                  <span className="px-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                    Format
+                  </span>
+                  <span className="mx-1 h-5 w-px bg-slate-200" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    title="Tebal (*teks*)"
+                    aria-label="Format tebal"
+                    disabled={sending}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => formatMessageEditor("bold")}
+                  ><Bold /></Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    title="Miring (_teks_)"
+                    aria-label="Format miring"
+                    disabled={sending}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => formatMessageEditor("italic")}
+                  ><Italic /></Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    title="Coret (~teks~)"
+                    aria-label="Format coret"
+                    disabled={sending}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => formatMessageEditor("strike")}
+                  ><Strikethrough /></Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    title="Monospace (```teks```)"
+                    aria-label="Format monospace"
+                    disabled={sending}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => formatMessageEditor("code")}
+                  ><Code2 /></Button>
+                  <span className="mx-1 h-5 w-px bg-slate-200" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    title="Kutipan"
+                    aria-label="Buat kutipan"
+                    disabled={sending}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => formatMessageEditor("quote")}
+                  ><Quote /></Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    title="Daftar berpoin"
+                    aria-label="Buat daftar berpoin"
+                    disabled={sending}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => formatMessageEditor("list")}
+                  ><List /></Button>
+                  <span className="mx-1 h-5 w-px bg-slate-200" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    title="Undo (Ctrl+Z)"
+                    aria-label="Undo"
+                    disabled={!messageHistoryStatus.canUndo}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={undoMessageEditor}
+                  ><Undo2 /></Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    title="Redo (Ctrl+Y)"
+                    aria-label="Redo"
+                    disabled={!messageHistoryStatus.canRedo}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={redoMessageEditor}
+                  ><Redo2 /></Button>
+                </div>
+              )}
+            </div>
             <Textarea
+              hidden={messageEditorView !== "edit"}
               ref={messageTextareaRef}
               autoFocus
               spellCheck
-              className="min-h-[55vh] resize-y whitespace-pre-wrap font-sans leading-6"
+              className="min-h-0 flex-1 resize-y whitespace-pre-wrap font-sans leading-6"
               aria-label={`Isi pesan WhatsApp baris ${messageEditor.rowNumber}`}
               placeholder="Tulis pesan WhatsApp..."
               value={messageEditor.value}
               onContextMenu={(event) => {
                 event.preventDefault();
-                if (sending) return;
+                if (sending || messageEditorView !== "edit") return;
                 const textarea = event.currentTarget;
+                setMessageDataSearch("");
                 setMessageDataMenu({
                   rowId: messageEditor.rowId,
                   x: event.clientX,
@@ -2016,31 +2512,89 @@ export function App() {
                   selectionEnd: textarea.selectionEnd,
                 });
               }}
-              onChange={(event) =>
-                setMessageEditor({ ...messageEditor, value: event.target.value })
-              }
+              onChange={(event) => {
+                const nativeEvent = event.nativeEvent;
+                const inputType =
+                  typeof InputEvent !== "undefined" && nativeEvent instanceof InputEvent
+                    ? nativeEvent.inputType
+                    : "insertText";
+                changeMessageEditorValue(event.target.value, inputType);
+              }}
               onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+                  event.preventDefault();
+                  if (event.shiftKey) redoMessageEditor();
+                  else undoMessageEditor();
+                  return;
+                }
+                if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+                  event.preventDefault();
+                  redoMessageEditor();
+                  return;
+                }
                 if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
                   event.preventDefault();
                   saveMessageEditor();
                 }
               }}
             />
+            {messageEditorView !== "edit" && (
+              <div className="flat-scrollbar min-h-0 flex-1 overflow-auto rounded-xl border border-slate-200 bg-white p-5">
+                {messageEditorView === "whatsapp-preview" ? (
+                  <div className="mx-auto max-w-xl rounded-2xl rounded-tl-md bg-[#e7ffdb] px-4 py-3 text-sm leading-6 text-slate-800 shadow-sm">
+                    {renderWhatsAppPreview(resolveMessageTemplate(messageEditor.value, editorSourceData))}
+                    <div className="mt-2 text-right text-[10px] text-slate-500">Pratinjau format WhatsApp</div>
+                  </div>
+                ) : (
+                  <div className="mx-auto max-w-xl rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                      Pesan setelah data baris disisipkan
+                    </div>
+                    <p className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">
+                      {resolveMessageTemplate(messageEditor.value, editorSourceData) || "Pesan masih kosong."}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
             {messageDataMenu?.target === "editor" && (
-              <div className="-mt-3 overflow-hidden rounded-xl border border-emerald-100 bg-white shadow-sm">
+              <div
+                className="absolute z-[60] w-72 overflow-hidden rounded-xl border border-emerald-100 bg-white text-slate-800 shadow-2xl shadow-slate-900/15"
+                onPointerDown={(event) => event.stopPropagation()}
+                onContextMenu={(event) => event.preventDefault()}
+                style={(() => {
+                  const bounds = messageEditorDialogRef.current?.getBoundingClientRect();
+                  if (!bounds) return { left: 16, top: 16 };
+                  return {
+                    left: Math.max(8, Math.min(messageDataMenu.x - bounds.left, bounds.width - 296)),
+                    top: Math.max(8, Math.min(messageDataMenu.y - bounds.top, bounds.height - 360)),
+                  };
+                })()}
+              >
                 <div className="border-b border-slate-100 bg-slate-50 px-3 py-2">
                   <div className="text-xs font-semibold">Sisipkan data baris ini</div>
                   <div className="mt-0.5 text-[11px] text-slate-500">
                     Pilih kolom untuk menyisipkan token personalisasi pada posisi kursor.
                   </div>
+                  <Input
+                    value={messageDataSearch}
+                    onChange={(event) => setMessageDataSearch(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setMessageDataMenu(null);
+                    }}
+                    placeholder="Cari nama kolom atau nilai..."
+                    aria-label="Cari data Excel untuk disisipkan"
+                    className="mt-2 h-8 bg-white text-xs"
+                  />
                 </div>
                 <div className="flat-scrollbar max-h-36 overflow-y-auto p-1.5">
-                  {editorSourceFields.length ? (
-                    editorSourceFields.map(([key, value]) => (
+                  {filteredEditorSourceFields.length ? (
+                    filteredEditorSourceFields.map(([key, value]) => (
                         <button
                           key={key}
                           type="button"
                           className="flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left hover:bg-emerald-50 focus-visible:bg-emerald-50 focus-visible:outline-none"
+                          onMouseDown={(event) => event.preventDefault()}
                           onClick={() => insertMessageData(key)}
                         >
                           <span className="min-w-0">
@@ -2054,16 +2608,18 @@ export function App() {
                       ))
                   ) : (
                     <p className="px-3 py-3 text-xs text-slate-500">
-                      Tidak ada kolom sumber Excel pada baris ini.
+                      {editorSourceFields.length
+                        ? "Tidak ada kolom yang cocok dengan pencarian."
+                        : "Tidak ada kolom sumber Excel pada baris ini."}
                     </p>
                   )}
                 </div>
               </div>
             )}
-            <p className="-mt-3 text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               Klik kanan untuk menyisipkan kolom dari baris Excel ini. Token seperti {"{{Nama}}"} akan diisi otomatis saat pesan dikirim.
             </p>
-            <div className="-mt-3 flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>{messageEditor.value.length.toLocaleString("id-ID")} karakter</span>
               <span>Ctrl+Enter untuk menyimpan</span>
             </div>
@@ -2098,6 +2654,20 @@ export function App() {
             <div className="border-b border-slate-100 bg-slate-50 px-3.5 py-3">
               <div className="text-xs font-semibold">Sisipkan data baris ini</div>
               <div className="mt-1 text-[11px] text-slate-500">Pilih kolom untuk membuat personalisasi.</div>
+            </div>
+            <div className="border-b border-slate-100 p-1.5">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={sending || !rows.length}
+                className="w-full rounded-lg px-2.5 py-2 text-left text-xs font-semibold text-emerald-800 hover:bg-emerald-50 focus-visible:bg-emerald-50 focus-visible:outline-none disabled:opacity-50"
+                onClick={() => void applyMessageTemplateToAll(messageDataMenu.rowId)}
+              >
+                Gunakan format ini untuk semua WA Message
+                <span className="mt-1 block text-[10px] font-normal text-slate-500">
+                  Mempertahankan token personalisasi per baris
+                </span>
+              </button>
             </div>
             <div className="flat-scrollbar max-h-64 overflow-y-auto p-1.5">
               {(() => {
